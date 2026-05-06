@@ -1,0 +1,15 @@
+/**
+  ******************************************************************************
+  * @file    pc_uart.h
+  * @brief   DEBUG 串口交互接口，兼容 54.6V2.5A pc_uart.c 行为。
+  ******************************************************************************
+  */
+#ifndef __PC_UART_H__
+#define __PC_UART_H__
+
+#include "common.h"
+
+u8 pc_uart_func(u8 auto_tim);
+void pc_uart_auto_send_enable(bit enable);
+
+#endif
