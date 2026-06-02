@@ -1,85 +1,95 @@
 /**
   ******************************************************************************
   * @file    usr_cfg.h
-  * @brief   60V3A ??????
+  * @brief   60V3A 充电器项目用户配置文件
   *
-  * ???
-  * 1. ??????????????????????????
-  * 2. ?????? 54.6V2.5A???????????????????
-  * 3. ???????????????????
+  * 说明：
+  * 1. 本文件只放项目级参数、阈值、通信速率、Flash 校准区偏移等配置。
+  * 2. 业务逻辑、状态机流程、协议处理不要写在本文件内。
+  * 3. 本工程使用 Keil C51，文件编码建议保持 GBK/ANSI，避免中文注释乱码。
+  * 4. 中文只用于注释，不参与串口打印，不涉及 Keil C51 0xFD 字符串补丁问题。
   ******************************************************************************
   */
 #ifndef __USR_CFG_H__
 #define __USR_CFG_H__
-/* ?????? ------------------------------------------------------------*/
-#define PROJECT_NAME                "60V3A_CHARGER_1WIRE"
-#define MODEL_NAME                  "60V3A"
-#define VERSION                     "V0.01"
-#define JIZHONG                     (6030U)
-#define V_RATED_MV                  (63000UL)
-#define V_MAX_MV                    (64300UL)
-#define I_RATED_MA                  (3000U)
-/* ???? ----------------------------------------------------------------*/
-#define SYS_CLK_HZ                  (24000000UL)
-#define TASK_10MS                   (10U)
-#define ADC_PERIOD_MS               (10U)
-#define COM_TIMEOUT_MS              (2000U)
-#define PROTO_TIMEOUT_MS            (30U)
-#define UART_TX_WAIT                (60000UL)
-/* ADC ??????? ------------------------------------------------------*/
-#define ADC_VREF_MV                 (5000UL)
-#define ADC_FULL                    (4095UL)
-#define ADC_SAMPLE_CNT              (10U)
-#define ADC_DROP_CNT                (2U)
-#define R1                          (300UL)
-#define R2                          (20UL)
-#define Ra                          (50UL)
-#define GAIN                        (27UL)
-/* ??????? ----------------------------------------------------------*/
-#define BAT_SERIES                  (15U)
-#define CELL_LOW_MV                 (1000U)
-#define CELL_REPAIR_MV              (2000U)
-#define CELL_PRE_MV                 (2500U)
-#define CELL_FULL_MV                (4200U)
-#define CELL_RECHG_MV               (4000U)
-#define vRESET                      (1000U)
-#define vSTART                      (CELL_LOW_MV * BAT_SERIES)
-#define vPRE                        (CELL_REPAIR_MV * BAT_SERIES)
-#define vPRE1                       (CELL_PRE_MV * BAT_SERIES)
-#define vCH20                       (CELL_RECHG_MV * BAT_SERIES)
-#define SET_vMAX                    (63000U)
-#define vDCOVP                      (64500U)
-#define iREPAIR                     (100U)
-#define iPRE                        (500U)
-#define iMAX                        (3000U)
-#define iGED                        (500U)
-#define iOCP                        (3500U)
-#define iOCP_OK                     (3200U)
-#define TIM_PRE                     (30U)
-#define TIM_CCCV                    (480U)
-#define RELAY_OFF_MS                (1000U)
-#define DUMMY_LOAD_MS               (3000U)
-/* ???? ----------------------------------------------------------------*/
-#define T_HOT_ERR                   (1050U)
-#define T_HOT_ERR_OK                (800U)
-#define T_CH_HOT                    (950U)
-#define T_CH_HOT_OK                 (700U)
-/* ???? ----------------------------------------------------------------*/
-#define DBG_BAUD                    (115200UL)
-#define COM_BAUD                    (4800UL)
-#define DEBUG_FIFO_SIZE             (32U)
-#define COM_FIFO_SIZE               (64U)
-#define CAL_FRAME_LEN               (16U)
-#define COM_FRAME_LEN               (32U)
-#define U1W_MASTER                  (0x10U)
-#define U1W_B6_TYPE_DEF             (0x01U)
-#define U1W_B6_DATA_DEF             (0x01U)
-/* PWM DAC -----------------------------------------------------------------*/
-#define PWM_FREQ_HZ                 (10000UL)
-#define PWM_DUTY_DEF                (0U)
-/* Flash -------------------------------------------------------------------*/
-#define FLASH_INFO_SEC_H            (0x3FU)
-#define FLASH_CAL_OFF               (0x00U)  /* 校准数据偏移：实际地址 0x3F00 */
-#define FLASH_CAL_SIZE              (0x80U)  /* 当前只使用 128 Bytes 校准区 */
-#define CAL_FLAG                    (0x5AA5U)
+
+/* 项目信息 ------------------------------------------------------------*/
+#define PROJECT_NAME                "60V3A_CHARGER_1WIRE"  /* 工程名称，用于调试/识别 */
+#define MODEL_NAME                  "60V3A"                 /* 机种名称 */
+#define VERSION                     "V0.01"                 /* 软件版本号 */
+#define JIZHONG                     (6030U)                  /* 机种编号/项目识别码，按上位机约定保留 */
+#define V_RATED_MV                  (63000UL)                /* 额定输出电压，单位：mV */
+#define V_MAX_MV                    (64300UL)                /* 最高目标电压/保护参考，单位：mV */
+#define I_RATED_MA                  (3000U)                  /* 额定输出电流，单位：mA */
+
+/* 系统时基 ------------------------------------------------------------*/
+#define SYS_CLK_HZ                  (24000000UL)             /* 系统主频，单位：Hz */
+#define TASK_10MS                   (10U)                    /* 主循环基础任务周期，单位：ms */
+#define ADC_PERIOD_MS               (10U)                    /* ADC 采样/处理周期，单位：ms */
+#define COM_TIMEOUT_MS              (2000U)                  /* 一线通信整体超时时间，单位：ms */
+#define PROTO_TIMEOUT_MS            (30U)                    /* 单帧协议等待超时时间，单位：ms */
+#define UART_TX_WAIT                (60000UL)                /* 串口发送等待保护计数，防止死等 */
+
+/* ADC 换算参数 --------------------------------------------------------*/
+#define ADC_VREF_MV                 (5000UL)                 /* ADC 参考电压，单位：mV */
+#define ADC_FULL                    (4095UL)                 /* 12 位 ADC 满量程 */
+#define ADC_SAMPLE_CNT              (10U)                    /* ADC 采样次数 */
+#define ADC_DROP_CNT                (2U)                     /* 去极值数量/滤波丢弃数量 */
+#define R1                          (300UL)                  /* 输出电压采样上拉电阻，单位：Kohm */
+#define R2                          (20UL)                   /* 输出电压采样下拉电阻，单位：Kohm */
+#define Ra                          (50UL)                   /* 电流采样电阻，单位：mohm */
+#define GAIN                        (27UL)                   /* 电流采样放大倍数 */
+
+/* 充电电压/电流阈值 ---------------------------------------------------*/
+#define BAT_SERIES                  (15U)                    /* 电池串数，60V 锂电按 15 串处理 */
+#define CELL_LOW_MV                 (1000U)                  /* 单节极低电压阈值，单位：mV */
+#define CELL_REPAIR_MV              (2000U)                  /* 单节修复/预充进入参考阈值，单位：mV */
+#define CELL_PRE_MV                 (2500U)                  /* 单节预充切换阈值，单位：mV */
+#define CELL_FULL_MV                (4200U)                  /* 单节满电目标电压，单位：mV */
+#define CELL_RECHG_MV               (4000U)                  /* 单节回充参考电压，单位：mV */
+#define vRESET                      (1000U)                  /* 输出复位/掉电判断参考，单位：mV */
+#define vSTART                      (CELL_LOW_MV * BAT_SERIES)     /* 起充最低包电压，单位：mV */
+#define vPRE                        (CELL_REPAIR_MV * BAT_SERIES)  /* 低压修复/预充参考包电压，单位：mV */
+#define vPRE1                       (CELL_PRE_MV * BAT_SERIES)     /* 预充转正常充电参考包电压，单位：mV */
+#define vCH20                       (CELL_RECHG_MV * BAT_SERIES)   /* 回充参考包电压，单位：mV */
+#define SET_vMAX                    (63000U)                 /* 默认恒压设定，单位：mV */
+#define vDCOVP                      (64500U)                 /* 输出过压保护阈值，单位：mV */
+#define iREPAIR                     (100U)                   /* 低压修复电流，单位：mA */
+#define iPRE                        (500U)                   /* 预充电流，单位：mA */
+#define iMAX                        (3000U)                  /* 最大充电电流，单位：mA */
+#define iGED                        (500U)                   /* 满电/转灯电流阈值，单位：mA */
+#define iOCP                        (3500U)                  /* 过流保护阈值，单位：mA */
+#define iOCP_OK                     (3200U)                  /* 过流恢复阈值，单位：mA */
+#define TIM_PRE                     (30U)                    /* 预充最长时间，单位：min */
+#define TIM_CCCV                    (480U)                   /* 恒流恒压最长时间，单位：min */
+#define RELAY_OFF_MS                (1000U)                  /* 继电器关闭保持时间，单位：ms */
+#define DUMMY_LOAD_MS               (3000U)                  /* 假负载/放电等待时间，单位：ms */
+
+/* NTC 温度阈值 --------------------------------------------------------*/
+#define T_HOT_ERR                   (1050U)                  /* NTC 高温保护阈值，单位：0.1℃，1050=105.0℃ */
+#define T_HOT_ERR_OK                (800U)                   /* NTC 高温保护恢复阈值，单位：0.1℃，800=80.0℃ */
+#define T_CH_HOT                    (950U)                   /* 充电降额/高温提示阈值，单位：0.1℃ */
+#define T_CH_HOT_OK                 (700U)                   /* 充电高温恢复阈值，单位：0.1℃ */
+
+/* 通信参数 ------------------------------------------------------------*/
+#define DBG_BAUD                    (115200UL)               /* 调试串口波特率 */
+#define COM_BAUD                    (4800UL)                 /* 一线通信串口波特率 */
+#define DEBUG_FIFO_SIZE             (32U)                    /* 调试串口接收 FIFO 大小 */
+#define COM_FIFO_SIZE               (64U)                    /* 一线通信接收 FIFO 大小 */
+#define CAL_FRAME_LEN               (16U)                    /* 校准帧最大长度 */
+#define COM_FRAME_LEN               (32U)                    /* 一线通信帧最大长度 */
+#define U1W_MASTER                  (0x10U)                  /* 一线通信主机地址/设备标识 */
+#define U1W_B6_TYPE_DEF             (0x01U)                  /* B6 命令默认类型 */
+#define U1W_B6_DATA_DEF             (0x01U)                  /* B6 命令默认数据 */
+
+/* PWM DAC 参数 --------------------------------------------------------*/
+#define PWM_FREQ_HZ                 (10000UL)                /* PWM DAC 频率，单位：Hz */
+#define PWM_DUTY_DEF                (0U)                     /* PWM 默认占空比 */
+
+/* Flash / EEPROM 校准区配置 ------------------------------------------*/
+#define FLASH_INFO_SEC_H            (0x3FU)                  /* 用户 EEPROM 页高地址：0x3Fxx */
+#define FLASH_CAL_OFF               (0x00U)                  /* 校准数据页内偏移，实际地址：0x3F00 */
+#define FLASH_CAL_SIZE              (0x80U)                  /* 当前只使用 128 Bytes 校准区：0x3F00~0x3F7F */
+#define CAL_FLAG                    (0x5AA5U)                /* 校准数据有效标志 */
+
 #endif

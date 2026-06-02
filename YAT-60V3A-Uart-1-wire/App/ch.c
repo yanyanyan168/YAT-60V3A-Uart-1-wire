@@ -292,13 +292,43 @@ static bit ch_bms_fault_check(void)
 }
 
 /**
-  * @brief  获取目标充电电压。
+  * @brief  获取目标充电电压，单位：mV。
+  *
+  * @note   数据来源：
+  *         1. 优先使用一线通信协议计算出的目标充电电压。
+  *         2. 该目标电压通常来自电池包协议参数，例如单节满充电压、串数等。
+  *
+  * @note   保护原则：
+  *         协议给出的目标电压不允许超过本机硬件允许的最大输出电压 SET_vMAX。
+  *         如果协议目标值过高，则强制钳位到 SET_vMAX。
+  *
+  * @note   这样做的目的：
+  *         1. 防止电池包协议数据异常导致输出过压。
+  *         2. 防止不同规格电池包误接时，超过本机设计能力。
+  *         3. 保证最终输出电压始终受本机硬件参数限制。
+  *
+  * @retval 目标充电电压，单位 mV。
   */
 static u16 ch_get_target_voltage_mv(void)
 {
-    u16 target_voltage_mv;
+    u16 target_voltage_mv;    /* 目标充电电压，单位 mV */
 
+    /*
+     * 从一线通信模块获取目标充电电压。
+     *
+     * 该函数内部通常会根据协议参数计算：
+     *  目标电压 = 单节满充电压 × 电池串数
+     *
+     * 如果协议参数无效，底层函数应返回默认值或安全值。
+     */
     target_voltage_mv = uart_1_wire_get_target_voltage_mv();
+
+    /*
+     * 目标电压上限保护。
+     *
+     * SET_vMAX 是本机允许的最大输出电压，
+     * 不管协议给出的目标电压是多少，都不能超过该硬件上限。
+     */
     if(target_voltage_mv > SET_vMAX)
     {
         target_voltage_mv = SET_vMAX;
@@ -308,13 +338,44 @@ static u16 ch_get_target_voltage_mv(void)
 }
 
 /**
-  * @brief  获取目标充电电流。
+  * @brief  获取目标充电电流，单位：mA。
+  *
+  * @note   数据来源：
+  *         1. 优先使用一线通信协议计算出的目标充电电流。
+  *         2. 该目标电流通常来自电池包协议参数，例如单节最大允许电流、
+  *            二级温度限流、电池包允许充电电流等。
+  *
+  * @note   保护原则：
+  *         协议给出的目标电流不允许超过本机硬件允许的最大充电电流 iMAX。
+  *         如果协议目标值过高，则强制钳位到 iMAX。
+  *
+  * @note   这样做的目的：
+  *         1. 防止协议异常导致充电电流过大。
+  *         2. 防止超过充电器功率器件、采样电阻、变压器等硬件能力。
+  *         3. 保证最终充电电流始终受本机硬件参数限制。
+  *
+  * @retval 目标充电电流，单位 mA。
   */
 static u16 ch_get_target_current_ma(void)
 {
-    u16 target_current_ma;
+    u16 target_current_ma;    /* 目标充电电流，单位 mA */
 
+    /*
+     * 从一线通信模块获取目标充电电流。
+     *
+     * 该函数内部通常会根据协议参数计算：
+     *  目标电流 = 电池包允许电流、本机最大电流、温度限流等综合结果
+     *
+     * 如果协议参数无效，底层函数应返回默认值或安全值。
+     */
     target_current_ma = uart_1_wire_get_target_current_ma();
+
+    /*
+     * 目标电流上限保护。
+     *
+     * iMAX 是本机允许的最大充电电流，
+     * 不管协议给出的目标电流是多少，都不能超过该硬件上限。
+     */
     if(target_current_ma > iMAX)
     {
         target_current_ma = iMAX;
@@ -323,39 +384,101 @@ static u16 ch_get_target_current_ma(void)
     return target_current_ma;
 }
 
+
 /**
-  * @brief  获取预充结束电压。
-  * @note   优先使用A4单节预充截止电压，异常时回退到本机默认vPRE1。
+  * @brief  获取预充结束电压，单位：mV。
+  *
+  * @note   作用：
+  *         用于判断预充阶段什么时候结束，什么时候可以进入 CCCV 阶段。
+  *
+  * @note   数据来源：
+  *         1. 优先使用 A4 协议下发的单节预充截止电压 cell_pre_mv。
+  *         2. 根据 A0 协议下发的串数 cell_series，换算成整包预充结束电压。
+  *         3. 如果协议数据异常，则回退使用本机默认预充结束电压 vPRE1。
+  *
+  * @note   保护原则：
+  *         1. 串数异常时，使用本机默认串数 BAT_SERIES。
+  *         2. 单节预充截止电压异常时，直接回退 vPRE1。
+  *         3. 换算后的整包电压超过 SET_vMAX 风险时，直接回退 vPRE1。
+  *         4. 换算后的整包电压不能低于本机最低预充阈值 vPRE。
+  *
+  * @retval 整包预充结束电压，单位 mV。
   */
 static u16 ch_get_pre_end_voltage_mv(void)
 {
     u8 i;
-    u8 series;
-    u16 cell_pre_mv;
-    u16 pack_mv;
+    u8 series;          /* 电池串数，来自 A0 协议 */
+    u16 cell_pre_mv;    /* 单节预充截止电压，单位 mV，来自 A4 协议 */
+    u16 pack_mv;        /* 换算后的整包预充结束电压，单位 mV */
 
+    /*
+     * 读取电池串数。
+     *
+     * 正常情况下，串数来自 A0 协议。
+     * 为防止协议异常，这里限制有效范围为 5~20 串。
+     *
+     * 如果 A0 返回的串数为 0、过小或过大，
+     * 则使用本机默认串数 BAT_SERIES。
+     */
     series = uart_1_wire.cell_series;
     if((series < 5U) || (series > 20U))
     {
         series = BAT_SERIES;
     }
 
+    /*
+     * 读取 A4 协议给出的单节预充截止电压。
+     *
+     * cell_pre_mv 单位：mV。
+     *
+     * 例如：
+     *  2500 表示 2.500V/节
+     *  3000 表示 3.000V/节
+     *
+     * 合理范围限制在：
+     *  CELL_REPAIR_MV ~ CELL_FULL_MV
+     *
+     * 如果低于修复电压，说明值太低；
+     * 如果高于单节满电电压，说明值太高；
+     * 两种情况都认为协议数据异常，回退到本机默认 vPRE1。
+     */
     cell_pre_mv = uart_1_wire.cell_pre_mv;
     if((cell_pre_mv < CELL_REPAIR_MV) || (cell_pre_mv > CELL_FULL_MV))
     {
         return vPRE1;
     }
 
+    /*
+     * 根据单节预充截止电压和串数，换算整包预充结束电压。
+     *
+     * 不直接使用：
+     *  pack_mv = cell_pre_mv * series;
+     *
+     * 是为了避免乘法结果异常扩大，也方便在累加过程中判断是否超过 SET_vMAX。
+     */
     pack_mv = 0U;
     for(i = 0U; i < series; i++)
     {
+        /*
+         * 如果继续累加会超过 SET_vMAX，
+         * 说明 A4 电压值或 A0 串数存在异常风险。
+         *
+         * 此时不使用协议计算值，直接回退本机默认 vPRE1。
+         */
         if(pack_mv > (u16)(SET_vMAX - cell_pre_mv))
         {
             return vPRE1;
         }
+
         pack_mv += cell_pre_mv;
     }
 
+    /*
+     * 换算后的整包预充结束电压，不能低于本机最低预充阈值 vPRE。
+     *
+     * 如果低于 vPRE，说明协议给出的预充结束点偏低，
+     * 可能导致过早退出预充阶段，因此回退到默认 vPRE1。
+     */
     if(pack_mv < vPRE)
     {
         return vPRE1;
@@ -365,55 +488,140 @@ static u16 ch_get_pre_end_voltage_mv(void)
 }
 
 /**
-  * @brief  获取CCCV最长充电时间。
-  * @note   协议未定义多电池聚合，本函数只按A0内部并数和A1容量估算。
+  * @brief  获取 CCCV 阶段最长充电时间，单位：分钟。
+  *
+  * @param  target_current_ma
+  *         当前准备使用的目标充电电流，单位 mA。
+  *
+  * @note   计算依据：
+  *         1. A0 协议中得到电池并数 cell_parallel。
+  *         2. A1 协议中得到单节容量 cell_cap_01ah，单位 0.1Ah。
+  *         3. 按：电池包容量 / 充电电流 估算基础充电时间。
+  *         4. 最后额外增加 30 分钟余量。
+  *
+  * @note   协议未定义多个电池包聚合容量，本函数只按：
+  *         单节容量 × 并数
+  *         来估算电池包容量。
+  *
+  * @note   为防止异常协议数据导致时间过大：
+  *         1. 并数限制为 1~16，异常时按 1 并处理。
+  *         2. 单节容量最大限制为 80.0Ah。
+  *         3. 电池包总容量最大限制为 80.0Ah。
+  *
+  * @retval CCCV 最长充电时间，单位：分钟。
   */
 static u16 ch_get_cccv_timeout_min(u16 target_current_ma)
 {
     u8 i;
-    u8 parallel;
-    u16 cell_cap_01ah;
-    u16 pack_cap_01ah;
-    u16 current_100ma;
-    u16 timeout_min;
+    u8 parallel;          /* 电池并数，来自 A0 协议 */
+    u16 cell_cap_01ah;    /* 单节容量，单位 0.1Ah，来自 A1 协议 */
+    u16 pack_cap_01ah;    /* 按并数估算后的电池包容量，单位 0.1Ah */
+    u16 current_100ma;    /* 充电电流换算为 100mA 单位，避免使用浮点 */
+    u16 timeout_min;      /* 计算得到的 CCCV 超时时间，单位分钟 */
 
+    /*
+     * 目标电流太小，或者还没有获取到电芯容量时，
+     * 不进行动态估算，直接使用默认 CCCV 时间。
+     */
     if((target_current_ma < 100U) || (uart_1_wire.cell_cap_01ah == 0U))
     {
         return TIM_CCCV;
     }
 
+    /*
+     * 读取 A0 协议给出的并数。
+     * 正常范围限制为 1~16。
+     * 如果协议数据异常，例如 0 或超过 16，则按 1 并处理。
+     */
     parallel = uart_1_wire.cell_parallel;
     if((parallel == 0U) || (parallel > 16U))
     {
         parallel = 1U;
     }
 
+    /*
+     * 读取 A1 协议给出的单节容量。
+     * 单位：0.1Ah。
+     *
+     * 例如：
+     *  50  = 5.0Ah
+     *  200 = 20.0Ah
+     *  800 = 80.0Ah
+     *
+     * 这里最大限制为 800，即 80.0Ah，
+     * 防止异常协议值导致后面时间计算过大。
+     */
     cell_cap_01ah = uart_1_wire.cell_cap_01ah;
     if(cell_cap_01ah > 800U)
     {
         cell_cap_01ah = 800U;
     }
 
+    /*
+     * 根据并数累加得到电池包容量。
+     *
+     * 不直接使用：
+     *  pack_cap_01ah = cell_cap_01ah * parallel;
+     *
+     * 是为了避免乘法结果过大，也方便在累加过程中做上限保护。
+     * 最终 pack_cap_01ah 也限制为最大 800，即 80.0Ah。
+     */
     pack_cap_01ah = 0U;
     for(i = 0U; i < parallel; i++)
     {
+        /*
+         * 如果继续累加会超过 800，则直接钳位到 800。
+         * 这样可以避免容量异常放大，导致 CCCV 超时时间异常变长。
+         */
         if(pack_cap_01ah > (u16)(800U - cell_cap_01ah))
         {
             pack_cap_01ah = 800U;
             break;
         }
+
         pack_cap_01ah += cell_cap_01ah;
     }
 
+    /*
+     * 将目标电流从 mA 换算成 100mA 单位。
+     *
+     * 例如：
+     *  3000mA -> 30
+     *  5000mA -> 50
+     *
+     * 这样后面可以用整数计算：
+     *  0.1Ah / 0.1A = 1 小时
+     */
     current_100ma = target_current_ma / 100U;
     if(current_100ma == 0U)
     {
         return TIM_CCCV;
     }
 
+    /*
+     * 超时时间估算：
+     *
+     * pack_cap_01ah 单位是 0.1Ah
+     * current_100ma 单位是 0.1A
+     *
+     * pack_cap_01ah / current_100ma 得到的是小时。
+     *
+     * 理论上转分钟应乘以 60。
+     * 这里使用 75，相当于在理论充电时间基础上放大 1.25 倍，
+     * 给恒压尾段、电流下降、通信误差、容量误差留出余量。
+     */
     timeout_min = (u16)((pack_cap_01ah * 75U) / current_100ma);
+
+    /*
+     * 再额外增加 30 分钟保护余量，
+     * 防止部分电池尾段时间较长时提前超时。
+     */
     timeout_min += 30U;
 
+    /*
+     * CCCV 最长时间不能比预充最长时间还短。
+     * 如果算出来太小，则至少使用 TIM_PRE。
+     */
     if(timeout_min < TIM_PRE)
     {
         timeout_min = TIM_PRE;
@@ -424,20 +632,56 @@ static u16 ch_get_cccv_timeout_min(u16 target_current_ma)
 
 /**
   * @brief  关闭所有充电输出，进入安全输出状态。
-  *
-  * 说明：
-  * 硬件输出关闭时，同步要求下一次B6关闭电池包充电MOS。
   */
 static void ch_output_all_off(void)
 {
+    /*
+     * 通知一线通信模块：后续 B6 控制中不再允许电池包充电。
+     * 参数 0 表示关闭充电使能。
+     */
     uart_1_wire_set_charge_enable(0);
 
+    /*
+     * 关闭继电器输出。
+     * 用于断开主充电输出通路或相关功率通路。
+     */
     relay_off();
+
+    /*
+     * 关闭超低压修复输出。
+     * 防止退出修复模式后仍保持修复电压/修复电流输出。
+     */
     repair_output_off();
+
+    /*
+     * 将电压调节控制拉到低输出状态。
+     * 目的是让电源环路回到安全低压/关闭输出方向。
+     */
     vadj_low();
+
+    /*
+     * 关闭风扇。
+     * 输出关闭后不再需要强制散热。
+     * 如果后续有延时散热需求，应由独立风扇控制逻辑处理。
+     */
     fan_off();
+
+    /*
+     * 关闭假负载。
+     * 防止在非充电状态下继续消耗输出端能量。
+     */
     dummy_load_off();
+
+    /*
+     * 电流 PWM 占空比清零。
+     * 确保恒流环路不再给出充电电流指令。
+     */
     set_Curr_Duty(0);
+
+    /*
+     * 电压 PWM 占空比清零。
+     * 确保恒压环路不再给出输出电压指令。
+     */
     set_Vol_Duty(0);
 }
 
