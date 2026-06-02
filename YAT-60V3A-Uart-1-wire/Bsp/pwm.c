@@ -11,7 +11,8 @@ static u16 idata s_vol_duty_shadow;
 void pwm_init(void)
 {
     CURR_REF_PWM_OUTPUT();
-    FOUT_S22 = GPIO_FOUT_STMR0_PWMOUT;
+    FOUT_S22 = 0U;
+    FOUT_S16 = GPIO_FOUT_STMR0_PWMOUT;
     STMR0_PSC = STMR_PRESCALE_VAL(0x00);
     SET_PERIOD(0, PWMMAX);
     SET_DUTY(0, PWM_DUTY_DEF);

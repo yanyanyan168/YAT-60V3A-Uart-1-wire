@@ -5,15 +5,15 @@
   *
   * 说明：
   * 1. 本文件按 54.6V2.5A 的状态机风格搭建，负责充电状态流转和输出控制。
-  * 2. P04 一线通信协议在 uart_1_wire.c/.h 中实现，本文件只读取目标电压、电流、BMS状态。
+  * 2. P30 一线通信协议在 uart_1_wire.c/.h 中实现，本文件只读取目标电压、电流、BMS状态。
   * 3. 每次状态变化必须打印中文日志，便于 DEBUG 串口现场判断流程走向。
   * 4. 电压、电流和计时阈值统一来自 usr_cfg.h，不在流程中散落硬编码。
   *
   * BMS异常处理边界：
   * 1. BMS_HANDSHAKE 专门等待A0/A1/A4/A6/A7握手成功，握手完成后才进入CH_Check。
- * 2. BMS 充电低温/高温进入 BMS_TEMP_ERR，输出关闭，温度恢复后回 CH_Check 继续充电。
-  * 2. BMS 其它异常或通信连续失败进入 BMS_ERR，输出关闭，只等拔电池恢复 CH_IDLE。
-  * 3. BT+ 拔包判断仍由主充电流程通过 val.vout < vRESET 完成，不放协议层处理。
+  * 2. BMS 充电低温/高温进入 BMS_TEMP_ERR，输出关闭，温度恢复后回 CH_Check 继续充电。
+  * 3. BMS 其它异常或通信连续失败进入 BMS_ERR，输出关闭，只等拔电池恢复 CH_IDLE。
+  * 4. BT+ 拔包判断仍由主充电流程通过 val.vout < vRESET 完成，不放协议层处理。
   ******************************************************************************
   */
 #include "ch.h"
@@ -38,6 +38,9 @@ static u8 idata s_tx_auto_tim;      /* DEBUG 自动上传计时，沿用 54.6V pc_uart_fu
 #define U1W_CH_SEND_INTERVAL_MS      (30U)
 #endif
 
+/* BMS握手阶段最长等待时间，避免电池接入后一直停在握手状态。 */
+#define BMS_HANDSHAKE_TIMEOUT_S      (20U)
+
 /* BMS温度类异常允许恢复后继续充电，其它BMS异常只等拔电池。 */
 #define BMS_TEMP_FAULT_MASK          (U1W_B4_LOW_TEMP | U1W_B4_HIGH_TEMP)
 #define BMS_OTHER_FAULT_MASK         ((u8)(U1W_B4_FAULT_MASK & (u8)(~BMS_TEMP_FAULT_MASK)))
@@ -59,14 +62,15 @@ static CH_STATE_ATTR_T code s_ch_state_attr[] =
 {
     { CH_IDLE,        "空载"       },
     { CH_Check,       "检测"       },
-    { BMS_HANDSHAKE,  "等待BMS握手"},
-    { CH_Pre1,        "修复/预充"  },
+    { BMS_HANDSHAKE,  "等待\xFD" "BMS握手"},
+    { CH_REPAIR,      "超低压修复" },
+    { CH_Pre1,        "预充"       },
     { CH_CCCV,        "恒流恒压"   },
     { CH_FULL,        "满电"       },
-    { CH_OVP,         "过压保护"   },
+    { CH_OVP,         "过\xFD压保护"   },
     { CH_TimOut,      "预充超时"   },
-    { CH_OTP,         "过温保护"   },
-    { CH_OCP,         "过流保护"   },
+    { CH_OTP,         "过\xFD温保护"   },
+    { CH_OCP,         "过\xFD流保护"   },
     { NTC_ERR,        "NTC异常"    },
     { HW_ERR,         "硬件异常"   },
     { CH_UVP,         "欠压保护"   },
@@ -220,6 +224,13 @@ static bit ch_bms_fault_check(void)
 {
     u8 st;
 
+    if((ch_state != BMS_HANDSHAKE) && (uart_1_wire_is_retry_over() != 0))
+    {
+        uart_1_wire_set_charge_enable(0);
+        ch_set_state(BMS_ERR, "BMS通信异常");
+        return 1;
+    }
+
     if(uart_1_wire_is_online() == 0)
     {
         return 0;
@@ -263,21 +274,21 @@ static bit ch_bms_fault_check(void)
     if((st & U1W_B4_OCP) != 0U)
     {
         uart_1_wire_set_charge_enable(0);
-        ch_set_state(BMS_ERR, "BMS过流保护");
+        ch_set_state(BMS_ERR, "BMS过\xFD流保护");
         return 1;
     }
 
     if((st & U1W_B4_MOS_HOT) != 0U)
     {
         uart_1_wire_set_charge_enable(0);
-        ch_set_state(BMS_ERR, "BMS充电MOS过温");
+        ch_set_state(BMS_ERR, "BMS充电MOS过\xFD温");
         return 1;
     }
 
     if((st & U1W_B4_OV) != 0U)
     {
         uart_1_wire_set_charge_enable(0);
-        ch_set_state(BMS_ERR, "BMS单节过充");
+        ch_set_state(BMS_ERR, "BMS单节过\xFD充");
         return 1;
     }
 
@@ -321,6 +332,105 @@ static u16 ch_get_target_current_ma(void)
     }
 
     return target_current_ma;
+}
+
+/**
+  * @brief  获取预充结束电压。
+  * @note   优先使用A4单节预充截止电压，异常时回退到本机默认vPRE1。
+  */
+static u16 ch_get_pre_end_voltage_mv(void)
+{
+    u8 i;
+    u8 series;
+    u16 cell_pre_mv;
+    u16 pack_mv;
+
+    series = uart_1_wire.cell_series;
+    if((series < 5U) || (series > 20U))
+    {
+        series = BAT_SERIES;
+    }
+
+    cell_pre_mv = uart_1_wire.cell_pre_mv;
+    if((cell_pre_mv < CELL_REPAIR_MV) || (cell_pre_mv > CELL_FULL_MV))
+    {
+        return vPRE1;
+    }
+
+    pack_mv = 0U;
+    for(i = 0U; i < series; i++)
+    {
+        if(pack_mv > (u16)(SET_vMAX - cell_pre_mv))
+        {
+            return vPRE1;
+        }
+        pack_mv += cell_pre_mv;
+    }
+
+    if(pack_mv < vPRE)
+    {
+        return vPRE1;
+    }
+
+    return pack_mv;
+}
+
+/**
+  * @brief  获取CCCV最长充电时间。
+  * @note   协议未定义多电池聚合，本函数只按A0内部并数和A1容量估算。
+  */
+static u16 ch_get_cccv_timeout_min(u16 target_current_ma)
+{
+    u8 i;
+    u8 parallel;
+    u16 cell_cap_01ah;
+    u16 pack_cap_01ah;
+    u16 current_100ma;
+    u16 timeout_min;
+
+    if((target_current_ma < 100U) || (uart_1_wire.cell_cap_01ah == 0U))
+    {
+        return TIM_CCCV;
+    }
+
+    parallel = uart_1_wire.cell_parallel;
+    if((parallel == 0U) || (parallel > 16U))
+    {
+        parallel = 1U;
+    }
+
+    cell_cap_01ah = uart_1_wire.cell_cap_01ah;
+    if(cell_cap_01ah > 800U)
+    {
+        cell_cap_01ah = 800U;
+    }
+
+    pack_cap_01ah = 0U;
+    for(i = 0U; i < parallel; i++)
+    {
+        if(pack_cap_01ah > (u16)(800U - cell_cap_01ah))
+        {
+            pack_cap_01ah = 800U;
+            break;
+        }
+        pack_cap_01ah += cell_cap_01ah;
+    }
+
+    current_100ma = target_current_ma / 100U;
+    if(current_100ma == 0U)
+    {
+        return TIM_CCCV;
+    }
+
+    timeout_min = (u16)((pack_cap_01ah * 75U) / current_100ma);
+    timeout_min += 30U;
+
+    if(timeout_min < TIM_PRE)
+    {
+        timeout_min = TIM_PRE;
+    }
+
+    return timeout_min;
 }
 
 /**
@@ -411,6 +521,8 @@ void usr_ch_func(void)
 {
     u16 target_voltage_mv;
     u16 target_current_ma;
+    u16 pre_end_voltage_mv;
+    u16 cccv_timeout_min;
     u16 next_10ms;
 
     ch_state = CH_IDLE;
@@ -450,10 +562,12 @@ void usr_ch_func(void)
 
             target_voltage_mv = ch_get_target_voltage_mv();
             target_current_ma = ch_get_target_current_ma();
+            pre_end_voltage_mv = ch_get_pre_end_voltage_mv();
+            cccv_timeout_min = ch_get_cccv_timeout_min(target_current_ma);
             
             if(last_state != ch_state)
             {
-                ch_state = last_state;
+                last_state = ch_state;
                 s_cut[0] = 0;
                 s_cut[1] = 0;
                 s_cut[2] = 0;
@@ -504,11 +618,17 @@ void usr_ch_func(void)
                 red_led_on();
                 green_led_off();
 
-                if(val.vout < vSTART)
+                TimCut();
+                if(Tim.s >= BMS_HANDSHAKE_TIMEOUT_S)
+                {
+                    uart_1_wire_set_charge_enable(0);
+                    ch_set_state(BMS_ERR, "BMS握手20秒超时");
+                }
+                else if(val.vout < vSTART)
                 {
                     if(++s_cut[0] >= 50U)
                     {
-                        ch_set_state(CH_UVP, "等待握手时电池电压低于起充阈值");
+                        ch_set_state(CH_UVP, "等待\xFD握手时电池电压低于起充阈值");
                     }
                 }
                 else
@@ -563,24 +683,68 @@ void usr_ch_func(void)
                     }
                     else if(uart_1_wire_is_online() == 0)
                     {
-                        ch_set_state(BMS_HANDSHAKE, "等待BMS握手成功");
+                        ch_set_state(BMS_HANDSHAKE, "等待\xFD" "BMS握手成功");
                     }
-                    else if(val.vout < vPRE1)
+                    else if(val.vout < vPRE)
                     {
                         uart_1_wire_set_charge_enable(1);
-                        ch_set_state(CH_Pre1, "通信正常，进入修复/预充");
+                        ch_set_state(CH_REPAIR, "通信正\xFD常，进入超低压修复");
+                    }
+                    else if(val.vout < pre_end_voltage_mv)
+                    {
+                        uart_1_wire_set_charge_enable(1);
+                        ch_set_state(CH_Pre1, "通信正\xFD常，进入预充");
                     }
                     else
                     {
                         uart_1_wire_set_charge_enable(1);
-                        ch_set_state(CH_CCCV, "通信正常，进入恒流恒压");
+                        ch_set_state(CH_CCCV, "通信正\xFD常，进入恒流恒压");
                     }
+                }
+                break;
+
+            case CH_REPAIR:
+                /*
+                 * 超低压修复：
+                 * - 继电器断开，只打开修复输出；
+                 * - 电流使用 iREPAIR，保持小电流修复；
+                 * - 到 vPRE 后转入预充，超时进入预充超时异常。
+                 */
+                if(ch_bms_fault_check() != 0)
+                {
+                    break;
+                }
+
+                uart_1_wire_set_charge_enable(1);
+                relay_off();
+                vadj_low();
+                repair_output_on();
+                fan_on();
+                Ged_Flash(50);
+                TimCut();
+                pwm_set_current_ref_ma(iREPAIR);
+
+                if(Tim.min >= TIM_PRE)
+                {
+                    uart_1_wire_set_charge_enable(0);
+                    ch_set_state(CH_TimOut, "超低压修复超时");
+                }
+                else if(val.vout >= vPRE)
+                {
+                    if(++s_cut[0] >= 50U)
+                    {
+                        ch_set_state(CH_Pre1, "修复结束，进入预充");
+                    }
+                }
+                else
+                {
+                    s_cut[0] = 0;
                 }
                 break;
 
             case CH_Pre1:
                 /*
-                 * 修复/预充：
+                 * 预充：
                  * - 正常充电前先检查BMS异常；
                  * - BMS温度异常可恢复，其它BMS异常锁定到拔电池。
                  */
@@ -611,11 +775,11 @@ void usr_ch_func(void)
                     uart_1_wire_set_charge_enable(0);
                     ch_set_state(CH_TimOut, "预充超时");
                 }
-                else if(val.vout >= vPRE1)
+                else if(val.vout >= pre_end_voltage_mv)
                 {
                     if(++s_cut[0] >= 50U)
                     {
-                        ch_set_state(CH_CCCV, "预充转CCCV");
+                        ch_set_state(CH_CCCV, "预充结束，进入恒流恒压");
                     }
                 }
                 else
@@ -655,7 +819,7 @@ void usr_ch_func(void)
                 set_Vol_Duty(SET_VOL(target_voltage_mv));
                 set_Curr_Duty(SET_CURR(target_current_ma));
 
-                if(Tim.min >= TIM_CCCV)
+                if(Tim.min >= cccv_timeout_min)
                 {
                     uart_1_wire_set_charge_enable(0);
                     ch_set_state(CCCV_TimOut, "CCCV超时");

@@ -1,7 +1,7 @@
 /**
   ******************************************************************************
   * @file    uart_1_wire.c
-  * @brief   P04 单线 UART 通信协议实现，充电器专用版。
+  * @brief   P30 单线 UART 通信协议实现，充电器专用版。
   *
   * 本版根据 5 轮讨论后的边界整理：
   * 1. 只实现 PDF 6.1 充电器流程：A0 -> A1 -> A4 -> A6 -> A7 -> B1 -> B3 -> B4 -> B6。
@@ -597,6 +597,7 @@ void uart_1_wire_init(void)
     uart_1_wire.retry_over = 0U;
     uart_1_wire.cell_series = BAT_SERIES;
     uart_1_wire.cell_parallel = 1U;
+    uart_1_wire.cell_pre_mv = CELL_PRE_MV;
     uart_1_wire.charge_status = U1W_B4_FAIL;
     uart_1_wire.target_voltage_mv = SET_vMAX;
     uart_1_wire.max_charge_current_ma = iMAX;
@@ -620,7 +621,7 @@ void uart_1_wire_init(void)
 }
 
 /**
-  * @brief  P04 单线通信 10ms 轮询任务。
+  * @brief  P30 单线通信 10ms 轮询任务。
   * @note   本函数只负责接收、超时、错误计时；不自动发送下一条命令。
   */
 void uart_1_wire_poll_10ms(void)

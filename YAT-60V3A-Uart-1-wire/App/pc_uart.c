@@ -7,7 +7,7 @@
   * 1. P24/P25 DEBUG 通道的接收数据来自 ch_rx_fifo。
   * 2. 收到 "*RST" 返回 1，主流程切入 usr_cal_func()。
   * 3. 保留 "par" 参数打印、"ENA" 自动上传和 40 字节调试帧格式。
-  * 4. 只处理 DEBUG 调试口，不解析 P04 单线通信协议。
+  * 4. 只处理 DEBUG 调试口，不解析 P30 单线通信协议。
   ******************************************************************************
   */
 #include "pc_uart.h"
@@ -98,7 +98,7 @@ static void pc_uart_print_param(void)
     pc_uart_print_current_line("恒流电流", iMAX);
     pc_uart_print_current_line("转灯电流", iGED);
     pc_uart_print_current_line("保护电流", iOCP);
-    pc_uart_print_current_line("过流恢复", iOCP_OK);
+    pc_uart_print_current_line("过\xFD流恢复", iOCP_OK);
 
     pc_uart_print_voltage_line("\n识别电压", vSTART);
     pc_uart_print_voltage_line("修复结束", vPRE);
@@ -120,23 +120,12 @@ static void pc_uart_print_param(void)
     uart_printf("上拉电阻: %luk\n", R1);
     uart_printf("下拉电阻: %luk\n", R2);
     uart_printf("电流电阻: %lumR\n", Ra);
-    uart_printf("放大倍数: %lu\n", GAIN);
+    uart_printf("放大倍数\xFD: %lu\n", GAIN);
 
     uart_printf("\n状态定义\n");
-    uart_printf("0: 空载             绿灯\n");
-    uart_printf("1: 闭合继电器       红灯\n");
-    uart_printf("2: 修复/预充        红灯\n");
-    uart_printf("3: 恒流恒压         红灯\n");
-    uart_printf("4: 满电             绿灯\n");
-    uart_printf("5: 过压保护         红灯闪1Hz\n");
-    uart_printf("6: 预充超时         红灯闪1Hz\n");
-    uart_printf("7: 过温保护         红灯闪1Hz\n");
-    uart_printf("8: 过流保护         红灯闪1Hz\n");
-    uart_printf("9 :内部NTC异常      红绿闪1Hz\n");
-    uart_printf("10:硬件异常         红绿闪1Hz\n");
-    uart_printf("11:欠压/低压保护    红灯闪1Hz\n");
-    uart_printf("12:恒流恒压超时     绿灯\n");
-    uart_printf("13:老化             绿灯闪1Hz\n");
+    uart_printf("0空载 1检测 2握手 3预充 4CCCV 5满电\n");
+    uart_printf("6OVP 7预充超时 8OTP 9OCP 10NTC 11硬件 12欠压 13CCCV超时\n");
+    uart_printf("14BMS温度 15BMS异常 16超低压修复 17老化\n");
 }
 
 /**

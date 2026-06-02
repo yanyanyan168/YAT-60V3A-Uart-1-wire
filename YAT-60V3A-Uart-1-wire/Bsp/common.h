@@ -61,6 +61,7 @@ typedef enum
     CCCV_TimOut,
     BMS_TEMP_ERR,   /* BMS充电过/欠温：输出关闭，温度恢复后继续充电 */
     BMS_ERR,        /* BMS其它异常/通信连续失败：输出关闭，只等拔电池恢复 */
+    CH_REPAIR,      /* 超低压修复：继电器断开，通过修复输出限流充电 */
     CH_AGING,
 } CH_STATUS_Types;
 #define usr_printf                         printf

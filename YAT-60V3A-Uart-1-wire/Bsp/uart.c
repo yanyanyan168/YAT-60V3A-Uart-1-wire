@@ -95,8 +95,9 @@ void com_uart_set_rx_mode(void)
 {
     __DisableIRQ(UART1_IRQn);
     FOUT_S04 = 0U;
+    FOUT_S30 = 0U;
     COM_UART_INPUT();
-    FIN_S8 = GPIO_FIN_SEL_P04;
+    FIN_S8 = GPIO_FIN_SEL_P30;
     UART1_CON0 = UART_STOP_BIT(0x0) |
                  UART_TX_INV(0x0) |
                  UART_RX_IRQ_EN(0x1) |
@@ -109,8 +110,9 @@ void com_uart_set_tx_mode(void)
 {
     __DisableIRQ(UART1_IRQn);
     FIN_S8 = 0U;
+    FOUT_S04 = 0U;
     COM_UART_OUTPUT();
-    FOUT_S04 = GPIO_FOUT_UART1_TX;
+    FOUT_S30 = GPIO_FOUT_UART1_TX;
     UART1_CON0 = UART_STOP_BIT(0x0) |
                  UART_TX_INV(0x0) |
                  UART_EN(0x1);

@@ -18,6 +18,7 @@ void adc_init(void)
     NTC_ADC_ANALOG();
     BATT_ADC_ANALOG();
     CURR_ADC_ANALOG();
+    batt_divider_on();          /* 打开电池分压，保证 AIN3 采样有效。 */
 
     ADC_CFG1 &= ~(0x7U << 3);
     ADC_CFG1 |= ADC_CLK_SET(5);

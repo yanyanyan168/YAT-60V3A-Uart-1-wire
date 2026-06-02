@@ -33,30 +33,36 @@ void gpio_output_safe_off(void)
     dummy_load_off();
     vadj_low();
     fan_off();
+    batt_divider_off();
+    green_led_off();
+    red_led_off();
+    CURR_REF_PWM_PIN = 0;
 }
 void gpio_init(void)
 {
     gpio_pull_default();
-    RELAY = 0;
-    BATT_DIVIDER_EN = 1;
     DUMMY_LOAD = 0;
+    RELAY = 0;
     REPAIR_OUTPUT = 0;
+    BATT_DIVIDER_EN = 0;
     VADJ = 0;
+    CURR_REF_PWM_PIN = 0;
+    GLED = 0;
     RLED = 0;
-    GLED = 1;
     FAN = 0;
-    RELAY_OUTPUT();
-    BATT_DIVIDER_OUTPUT();
     DUMMY_LOAD_OUTPUT();
+    RELAY_OUTPUT();
     REPAIR_OUTPUT_MODE();
+    BATT_DIVIDER_OUTPUT();
     VADJ_OUTPUT();
-    RLED_OUTPUT();
+    CURR_REF_PWM_OUTPUT();
     GLED_OUTPUT();
+    RLED_OUTPUT();
     FAN_OUTPUT();
+    P27_FLOAT_INPUT();
     NTC_ADC_ANALOG();
     BATT_ADC_ANALOG();
     CURR_ADC_ANALOG();
-    P16_FLOAT_INPUT();
     DEBUG_RX_INPUT();
     DEBUG_TX_OUTPUT();
     COM_UART_INPUT();

@@ -48,17 +48,17 @@ typedef enum
     ADC_Channel_XX       = 7 | ADC_EXT_SEL(0x1),
 } ADC_Channel;
 
-/* 原理图对应关系：P10/AIN8 电流，P03/AIN3 电池电压，P01/AIN1 NTC。 */
+/* 原理图对应关系：P10/AIN8 电流，P03/AIN3 电池电压，P05/AIN1 NTC。 */
 #define AN_CURR                            ADC_Channel_P10
 #define AN_VOUT                            ADC_Channel_P03
-#define AN_I_NTC                           ADC_Channel_P01
+#define AN_I_NTC                           ADC_Channel_P05
 
 typedef struct
 {
     s16 vout;              /* 电池电压采样原始 ADC，AIN3/P03 */
     s16 vdc;               /* 兼容 54.6V 字段，本项目镜像 vout */
     s16 curr;              /* 电流采样原始 ADC，AIN8/P10 */
-    u16 i_ntc;             /* NTC 原始 ADC，AIN1/P01 */
+    u16 i_ntc;             /* NTC 原始 ADC，AIN1/P05 */
 } ADC_Type;
 
 typedef struct
