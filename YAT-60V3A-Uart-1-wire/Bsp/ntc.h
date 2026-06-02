@@ -10,7 +10,8 @@
 #define AD_BIT     4096u
 
 
-#define CH_D2R(adc)   ((u16)(((u32)(adc) * CH_Rref) / ((AD_BIT - (u32)(adc)) * 10u)))
+/* CH_Rref 已经是 10ohm 单位，不能再除以 10，否则阻值会小 10 倍，温度会虚高。 */
+#define CH_D2R(adc)   ((u16)(((u32)(adc) * CH_Rref) / (AD_BIT - (u32)(adc))))
 
 s16 CH_R2T(u16 res10);
 
