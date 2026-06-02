@@ -33,6 +33,14 @@ CH_STATUS_Types idata last_state;
 static u8 idata s_cut[4];          /* 状态内确认计数，防止临界点抖动。 */
 static u8 idata s_tx_auto_tim;      /* DEBUG 自动上传计时，沿用 54.6V pc_uart_func(auto_tim)。 */
 
+/* 单节最高电压接近满充时，按物理过程缓慢降低 CCCV 电流，避免 10ms 连续降流。 */
+#define CCCV_CELL_DERATE_MV          (4195U)  /* 4.195V */
+#define CCCV_DERATE_STEP_MA          (100U)   /* 每次降低 0.1A */
+#define CCCV_DERATE_INTERVAL_10MS    (20U)    /* 20 * 10ms = 0.2s */
+
+static u16 idata s_cccv_curr_limit_ma;        /* CCCV 实际限流电流，单位 mA。 */
+static u8  idata s_cccv_derate_cnt;           /* CCCV 降流间隔计数。 */
+
 /* 一线通信主机发送间隔。协议要求从机回复后空闲再发下一条，当前由主流程控制。 */
 #ifndef U1W_CH_SEND_INTERVAL_MS
 #define U1W_CH_SEND_INTERVAL_MS      (30U)
@@ -382,6 +390,49 @@ static u16 ch_get_target_current_ma(void)
     }
 
     return target_current_ma;
+}
+
+
+/**
+  * @brief  获取 CCCV 阶段实际使用的目标电流，单位：mA。
+  * @param  target_current_ma  协议和本机限幅后的目标电流。
+  * @note   当 B1 上报的最高单节电压达到 4.195V 后，
+  *         每 0.2 秒最多降低 0.1A，避免 10ms 周期内连续快速降流。
+  */
+static u16 ch_get_cccv_work_current_ma(u16 target_current_ma)
+{
+    if((s_cccv_curr_limit_ma == 0U) || (s_cccv_curr_limit_ma > target_current_ma))
+    {
+        s_cccv_curr_limit_ma = target_current_ma;
+        s_cccv_derate_cnt = 0U;
+    }
+
+    if(uart_1_wire.cell_max_mv >= CCCV_CELL_DERATE_MV)
+    {
+        if(s_cccv_derate_cnt < CCCV_DERATE_INTERVAL_10MS)
+        {
+            s_cccv_derate_cnt++;
+        }
+        else
+        {
+            s_cccv_derate_cnt = 0U;
+
+            if(s_cccv_curr_limit_ma > (u16)(iGED + CCCV_DERATE_STEP_MA))
+            {
+                s_cccv_curr_limit_ma -= CCCV_DERATE_STEP_MA;
+            }
+            else
+            {
+                s_cccv_curr_limit_ma = iGED;
+            }
+        }
+    }
+    else
+    {
+        s_cccv_derate_cnt = 0U;
+    }
+
+    return s_cccv_curr_limit_ma;
 }
 
 
@@ -808,6 +859,12 @@ void usr_ch_func(void)
                 Tim.ms = 0;
                 Tim.s = 0;
                 Tim.min = 0;
+
+                if(ch_state == CH_CCCV)
+                {
+                    s_cccv_curr_limit_ma = 0U;
+                    s_cccv_derate_cnt = 0U;
+                }
             }
 
             switch(ch_state)
@@ -1050,6 +1107,12 @@ void usr_ch_func(void)
                 Ged_Flash(50);
                 TimCut();
                 set_Vol_Duty(SET_VOL(target_voltage_mv));
+
+                /*
+                 * 最高单节电压达到 4.195V 后，CCCV 电流每 0.2 秒最多降低 0.1A。
+                 * 该限流值只在本次 CCCV 阶段内保持，重新进入 CCCV 后会重新初始化。
+                 */
+                target_current_ma = ch_get_cccv_work_current_ma(target_current_ma);
                 set_Curr_Duty(SET_CURR(target_current_ma));
 
                 if(Tim.min >= cccv_timeout_min)
