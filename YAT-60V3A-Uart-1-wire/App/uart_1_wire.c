@@ -44,7 +44,7 @@
 #endif
 
 #ifndef U1W_FULL_DISPLAY_10MS
-#define U1W_FULL_DISPLAY_10MS               (180000UL / TASK_10MS) /* 满电后显示电量 3 分钟 */
+#define U1W_FULL_DISPLAY_10MS               (180000UL / TASK_10MS) /* 满电后 B6 03 SOC 周期发送窗口：3 分钟 */
 #endif
 
 #define U1W_LIMIT_VOLTAGE(v)                (((v) == 0U) ? SET_vMAX : (((v) > SET_vMAX) ? SET_vMAX : (v)))
@@ -317,10 +317,12 @@ bit uart_1_wire_send_next(void)
 
     case U1W_STEP_B6:
         /*
-         * B6 优先级：
-         * 1. MOS 状态变化或异常时，优先同步充电 MOS ON/OFF。
-         * 2. 满电显示倒计时有效时，发送 B6 03 SOC，让电池包显示电量。
-         * 3. 其他正常充电周期，发送 B6 01 MOS，维持充电 MOS ON。
+         * B6 发送策略：
+         * 1. MOS 状态变化、异常或满电刚停充时，优先发送 B6 01，同步电池包充电 MOS 状态。
+         * 2. 满电显示倒计时有效时，每次轮到 B6 都发送 B6 03 SOC，让电池包持续显示电量。
+         * 3. 满电显示窗口结束后，恢复发送 B6 01 MOS，继续维持当前充电 MOS 状态。
+         *
+         * 注意：满电显示不是只发一次，而是在 3 分钟窗口内随 B6 轮询周期重复发送。
          */
         mos_data = 0U;
         if((s_charge_enable != 0) && (uart_1_wire_has_fault() == 0))
@@ -863,8 +865,9 @@ void uart_1_wire_set_charge_enable(bit enable)
 }
 
 /**
-  * @brief  充满后启动 3 分钟电量显示。
-  * @note   此函数只负责协议 B6 03 SOC；是否停充、是否回待机由充电主流程决定。
+  * @brief  启动满电后 3 分钟电量显示窗口。
+  * @note   本函数只打开显示窗口；真正的 B6 03 SOC 会在后续 B6 轮询中周期性重复发送。
+  *         是否停充、是否回待机由充电主流程决定。
   */
 void uart_1_wire_start_full_display(void)
 {
