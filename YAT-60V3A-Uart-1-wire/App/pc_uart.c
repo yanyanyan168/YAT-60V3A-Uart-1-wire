@@ -102,8 +102,8 @@ static void pc_uart_print_param(void)
     pc_uart_print_current_line("过\xFD流恢复", iOCP_OK);
 
     pc_uart_print_voltage_line("\n识别电压", vSTART);
-    pc_uart_print_voltage_line("修复结束", vPRE);
-    pc_uart_print_voltage_range_line("预充电压", vPRE, vPRE1);
+    pc_uart_print_voltage_line("修复结束", vPRE_30V);
+    pc_uart_print_voltage_range_line("预充电压", vPRE_30V, vPRE_37V5);
     pc_uart_print_voltage_line("最高电压", SET_vMAX);
     pc_uart_print_voltage_line("高压保护", vDCOVP);
 

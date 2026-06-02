@@ -33,11 +33,6 @@ CH_STATUS_Types idata last_state;
 static u8 idata s_cut[4];          /* 状态内确认计数，防止临界点抖动。 */
 static u8 idata s_tx_auto_tim;      /* DEBUG 自动上传计时，沿用 54.6V pc_uart_func(auto_tim)。 */
 
-/* 单节最高电压接近满充时，按物理过程缓慢降低 CCCV 电流，避免 10ms 连续降流。 */
-#define CCCV_CELL_DERATE_MV          (4195U)  /* 4.195V */
-#define CCCV_DERATE_STEP_MA          (100U)   /* 每次降低 0.1A */
-#define CCCV_DERATE_INTERVAL_10MS    (20U)    /* 20 * 10ms = 0.2s */
-
 static u16 idata s_cccv_curr_limit_ma;        /* CCCV 实际限流电流，单位 mA。 */
 static u8  idata s_cccv_derate_cnt;           /* CCCV 降流间隔计数。 */
 
@@ -432,13 +427,13 @@ static u16 ch_get_cccv_work_current_ma(u16 target_current_ma)
     /*
      * B1 上报最高单节电压达到 4.195V 后开始缓慢降流。
      */
-    if(uart_1_wire.cell_max_mv >= CCCV_CELL_DERATE_MV)
+    if(uart_1_wire.cell_max_mv >= (4195U))  /* 4.195V */
     {
         /*
          * 10ms 调用一次，累计 20 次约等于 0.2 秒。
          * 未到时间前不降流。
          */
-        if(s_cccv_derate_cnt < CCCV_DERATE_INTERVAL_10MS)
+        if(s_cccv_derate_cnt < 20)
         {
             s_cccv_derate_cnt++;
         }
@@ -449,9 +444,9 @@ static u16 ch_get_cccv_work_current_ma(u16 target_current_ma)
             /*
              * 每次降低 100mA，最低限制到 iGED。
              */
-            if(s_cccv_curr_limit_ma > (u16)(iGED + CCCV_DERATE_STEP_MA))
+            if(s_cccv_curr_limit_ma > (u16)(iGED + 100))
             {
-                s_cccv_curr_limit_ma -= CCCV_DERATE_STEP_MA;
+                s_cccv_curr_limit_ma -= 100;
             }
             else
             {
@@ -481,13 +476,13 @@ static u16 ch_get_cccv_work_current_ma(u16 target_current_ma)
   * @note   数据来源：
   *         1. 优先使用 A4 协议下发的单节预充截止电压 cell_pre_mv。
   *         2. 根据 A0 协议下发的串数 cell_series，换算成整包预充结束电压。
-  *         3. 如果协议数据异常，则回退使用本机默认预充结束电压 vPRE1。
+  *         3. 如果协议数据异常，则回退使用本机默认预充结束电压 vPRE_37V5。
   *
   * @note   保护原则：
   *         1. 串数异常时，使用本机默认串数 BAT_SERIES。
-  *         2. 单节预充截止电压异常时，直接回退 vPRE1。
-  *         3. 换算后的整包电压超过 SET_vMAX 风险时，直接回退 vPRE1。
-  *         4. 换算后的整包电压不能低于本机最低预充阈值 vPRE。
+  *         2. 单节预充截止电压异常时，直接回退 vPRE_37V51。
+  *         3. 换算后的整包电压超过 SET_vMAX 风险时，直接回退 vPRE_37V5。
+  *         4. 换算后的整包电压不能低于本机最低预充阈值 vPRE_30V。
   *
   * @retval 整包预充结束电压，单位 mV。
   */
@@ -523,16 +518,16 @@ static u16 ch_get_pre_end_voltage_mv(void)
      *  3000 表示 3.000V/节
      *
      * 合理范围限制在：
-     *  CELL_REPAIR_MV ~ CELL_FULL_MV
+     *  CELL_REPAIR_MV 2V ~ CELL_FULL_MV 4.2V
      *
      * 如果低于修复电压，说明值太低；
      * 如果高于单节满电电压，说明值太高；
-     * 两种情况都认为协议数据异常，回退到本机默认 vPRE1。
+     * 两种情况都认为协议数据异常，回退到本机默认 vPRE_37V5。
      */
     cell_pre_mv = uart_1_wire.cell_pre_mv;
     if((cell_pre_mv < CELL_REPAIR_MV) || (cell_pre_mv > CELL_FULL_MV))
     {
-        return vPRE1;
+        return vPRE_37V5;
     }
 
     /*
@@ -550,25 +545,25 @@ static u16 ch_get_pre_end_voltage_mv(void)
          * 如果继续累加会超过 SET_vMAX，
          * 说明 A4 电压值或 A0 串数存在异常风险。
          *
-         * 此时不使用协议计算值，直接回退本机默认 vPRE1。
+         * 此时不使用协议计算值，直接回退本机默认 vPRE_37V5。
          */
         if(pack_mv > (u16)(SET_vMAX - cell_pre_mv))
         {
-            return vPRE1;
+            return vPRE_37V5;
         }
 
         pack_mv += cell_pre_mv;
     }
 
     /*
-     * 换算后的整包预充结束电压，不能低于本机最低预充阈值 vPRE。
+     * 换算后的整包预充结束电压，不能低于本机最低预充阈值 vPRE_30V。
      *
      * 如果低于 vPRE，说明协议给出的预充结束点偏低，
-     * 可能导致过早退出预充阶段，因此回退到默认 vPRE1。
+     * 可能导致过早退出预充阶段，因此回退到默认 vPRE_37V5。
      */
-    if(pack_mv < vPRE)
+    if(pack_mv < vPRE_30V)
     {
-        return vPRE1;
+        return vPRE_37V5;
     }
 
     return pack_mv;
@@ -792,23 +787,41 @@ static void idle_ck(void)
 }
 
 /**
-  * @brief  一线通信调度。
+  * @brief  一线通信 10ms 调度任务。
   *
-  * 说明：
-  * 1. 每10ms调用poll，负责接收、校验、解析和超时判断。
-  * 2. 发送间隔由主充电流程控制，满足帧间空闲要求。
-  * 3. 连续失败超过上限后，只置retry_over；本函数不自动复位，让状态机切入BMS_ERR。
+  * @note   本函数由主充电流程每 10ms 调用一次，负责：
+  *         1. 调用协议层 poll，处理接收、校验、解析、超时计数。
+  *         2. 按固定间隔发送下一条一线通信命令。
+  *         3. 通信连续失败后不主动复位，由状态机统一切入 BMS_ERR。
+  *
+  * @note   发送节奏说明：
+  *         虽然本函数每 10ms 调用一次，但实际发送间隔由
+  *         U1W_CH_SEND_INTERVAL_MS 控制，避免主机连续发送太快，
+  *         给电池包留出回复和总线空闲时间。
   */
 static void ch_uart_1wire_task_10ms(void)
 {
-    static u16 idata send_deadline_ms = 0U;
+    static u16 idata send_deadline_ms = 0U;  /* 下一次允许发送的时间点，单位 ms */
 
+    /*
+     * 协议层 10ms 轮询：
+     * - 从 UART1 FIFO 取数据；
+     * - 组帧、校验、解析；
+     * - 更新 A0/A1/A4/A6/A7/B1/B3/B4/B6 等状态；
+     * - 处理回复超时和重试计数。
+     */
     uart_1_wire_poll_10ms();
 
     /*
-     * BMS_ERR 是锁定类异常：只等拔电池恢复。
-     * 进入该状态后不再主动发送B1/B3/B4/B6，避免异常状态下持续通讯。
-     * BMS_TEMP_ERR 不能停通讯，因为温度恢复依赖B4状态更新。
+     * BMS_ERR 是锁定类异常，只等拔电池恢复。
+     *
+     * 进入 BMS_ERR 后：
+     * - 关闭充电使能；
+     * - 不再主动发送 B1/B3/B4/B6；
+     * - 避免 BMS 已经异常时仍持续通信或误开 MOS。
+     *
+     * 注意：
+     * BMS_TEMP_ERR 不能停止通信，因为温度恢复依赖 B4 状态继续更新。
      */
     if(ch_state == BMS_ERR)
     {
@@ -816,26 +829,49 @@ static void ch_uart_1wire_task_10ms(void)
         return;
     }
 
+    /*
+     * 第一次进入时初始化发送时间点。
+     * 后续由 timer_period_elapsed() 自动推进下一次触发时间。
+     */
     if(send_deadline_ms == 0U)
     {
         send_deadline_ms = timer_deadline_ms(U1W_CH_SEND_INTERVAL_MS);
     }
 
+    /*
+     * 发送间隔未到，不发送。
+     *
+     * timer_period_elapsed() 支持 tick 回绕，
+     * 且主循环卡顿时只补一次触发，不会连续补发多帧。
+     */
     if(timer_period_elapsed(&send_deadline_ms, U1W_CH_SEND_INTERVAL_MS) == 0)
     {
         return;
     }
 
+    /*
+     * 连续通信失败已经超过协议层允许上限。
+     * 这里只停止继续发送，不在这里切状态；
+     * 由 ch_bms_fault_check() 统一切入 BMS_ERR，保持状态机职责清楚。
+     */
     if(uart_1_wire_is_retry_over() != 0)
     {
         return;
     }
 
+    /*
+     * 协议层允许发送时，发送下一条命令。
+     *
+     * 典型流程：
+     * 握手阶段：A0 -> A1 -> A4 -> A6 -> A7
+     * 在线阶段：B1 -> B3 -> B4 -> B6 循环
+     */
     if(uart_1_wire_can_send() != 0)
     {
         uart_1_wire_send_next();
     }
 }
+
 
 void usr_ch_func(void)
 {
@@ -1011,7 +1047,7 @@ void usr_ch_func(void)
                     {
                         ch_set_state(BMS_HANDSHAKE, "等握手");
                     }
-                    else if(val.vout < vPRE)
+                    else if(val.vout < vPRE_30V)
                     {
                         uart_1_wire_set_charge_enable(1);
                         ch_set_state(CH_REPAIR, "通信OK进修复");
@@ -1034,7 +1070,7 @@ void usr_ch_func(void)
                  * 超低压修复：
                  * - 继电器断开，只打开修复输出；
                  * - 电流使用 iREPAIR，保持小电流修复；
-                 * - 到 vPRE 后转入预充，超时进入预充超时异常。
+                 * - 到 vPRE_30V 后转入预充，超时进入预充超时异常。
                  */
                 if(ch_bms_fault_check() != 0)
                 {
@@ -1055,7 +1091,7 @@ void usr_ch_func(void)
                     uart_1_wire_set_charge_enable(0);
                     ch_set_state(CH_TimOut, "修复超时");
                 }
-                else if(val.vout >= vPRE)
+                else if(val.vout >= vPRE_30V)
                 {
                     if(++s_cut[0] >= 50U)
                     {
@@ -1181,7 +1217,7 @@ void usr_ch_func(void)
                 ch_output_all_off();
                 red_led_off();
                 green_led_on();
-                if(val.vout < vCH20)
+                if(val.vout < vCH60)
                 {
                     if(++s_cut[0] >= 50U)
                     {
