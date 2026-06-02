@@ -184,7 +184,7 @@ static void pc_uart_send_auto_frame(void)
 
     crc32 = CRC32(s_pc_tx_buf, PC_UART_DATA_LEN);
     pc_uart_put_u32(s_pc_tx_buf, 36U, crc32);
-    uart1_tx((char *)s_pc_tx_buf, PC_UART_FRAME_LEN);
+    ch_uart_send_buf((char *)s_pc_tx_buf, PC_UART_FRAME_LEN);
 }
 
 void pc_uart_auto_send_enable(bit enable)

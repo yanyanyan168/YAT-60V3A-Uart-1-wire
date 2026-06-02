@@ -185,7 +185,7 @@ static void cal_tx_str_crc(char *str)
     s_cal_tx_buf[len + 1U] = (u8)(crc >> 8);
     s_cal_tx_buf[len + 2U] = (u8)(crc >> 16);
     s_cal_tx_buf[len + 3U] = (u8)(crc >> 24);
-    uart1_tx((char *)s_cal_tx_buf, (u8)(len + 4U));
+    ch_uart_send_buf((char *)s_cal_tx_buf, (u8)(len + 4U));
 }
 
 static bit cal_frame_crc_ok(u8 *rx_buf, u8 len)

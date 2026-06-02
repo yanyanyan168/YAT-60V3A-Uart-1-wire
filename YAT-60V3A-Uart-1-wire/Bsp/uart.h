@@ -29,7 +29,4 @@ UART_1WIRE_DIR_Types com_uart_get_dir(void);
 BSP_RESULT_Types com_uart_send_byte(u8 dat);
 BSP_RESULT_Types com_uart_send_buf(u8 *buf, u8 len);
 
-
-void UART1_Init(void);
-void uart1_tx(char *str, u8 len);
 #endif

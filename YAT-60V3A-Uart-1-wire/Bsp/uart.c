@@ -185,14 +185,3 @@ void uart_init(void)
     com_uart_init();
 }
 
-
-
-void UART1_Init(void)
-{
-    ch_uart_init();
-}
-
-void uart1_tx(char *str, u8 len)
-{
-    ch_uart_send_buf((u8 *)str, len);
-}
