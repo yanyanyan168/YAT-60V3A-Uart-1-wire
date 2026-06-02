@@ -7,9 +7,8 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "include.h"
+#include "flash_layout.h"
 #include <stdio.h>
-
-#define FLASH_CAL_ADDR            (0x00)          // 起始地址128byte对齐
      
      
 void flash_ferase_sector(u8 addr);

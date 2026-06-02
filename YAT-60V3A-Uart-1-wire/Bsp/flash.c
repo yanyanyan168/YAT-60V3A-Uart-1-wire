@@ -1,5 +1,21 @@
 #include "flash.h"
 
+static bit flash_user_range_ok(u8 addr, u16 len)
+{
+    if(len == 0U)
+    {
+        return 0;
+    }
+
+    /* 当前只允许访问校准区：0x3F00~0x3F7F。 */
+    if(((u16)addr + len) > FLASH_CAL_MAX_SIZE)
+    {
+        return 0;
+    }
+
+    return 1;
+}
+
 /**
   * @brief  flash erase sector
   * @param  addr : sector address in flash
@@ -7,10 +23,20 @@
   */
 void flash_ferase_sector(u8 addr)
 {
+    if((addr & (FLASH_EEPROM_SECTOR_SIZE - 1U)) != 0U)
+    {
+        return;
+    }
+
+    if(!flash_user_range_ok(addr, FLASH_EEPROM_SECTOR_SIZE))
+    {
+        return;
+    }
+
     IE_EA = 0;
     
     CLK_CON6       = (CLK_CON6 & 0xC0) | 0x4;
-    FLASH_ADDR     = 0x3F;
+    FLASH_ADDR     = FLASH_EEPROM_PAGE_H;
     FLASH_ADDR     = addr;
     FLASH_PASSWORD = FLASH_PASSWORD(0xB9);          // 写入操作密码
     FLASH_CON      = FLASH_SER_TRG(0x1);            // 触发扇区擦除
@@ -30,9 +56,14 @@ void flash_ferase_sector(u8 addr)
   */
 void flash_program(u8 addr, u8 *p_data, u8 len)
 {
+    if(!flash_user_range_ok(addr, len))
+    {
+        return;
+    }
+
     IE_EA = 0;
     
-    FLASH_ADDR = 0x3F;
+    FLASH_ADDR = FLASH_EEPROM_PAGE_H;
     FLASH_ADDR = addr;
     
     while(len >= 1) {
@@ -56,11 +87,16 @@ void flash_program(u8 addr, u8 *p_data, u8 len)
   */
 void flash_fread(u8 addr, u8 *p_data, u16 len)
 {
+    if(!flash_user_range_ok(addr, len))
+    {
+        return;
+    }
+
     IE_EA = 0;
     
     FLASH_TRIM |= 0xC;
     while(len != 0) {
-        *(p_data++) = *((u8 code *)(0x3F00 + addr++));
+        *(p_data++) = *((u8 code *)(FLASH_EEPROM_PAGE_START + addr++));
         len--;
     }
     FLASH_TRIM = (FLASH_TRIM & 0xF3) | 0x4;

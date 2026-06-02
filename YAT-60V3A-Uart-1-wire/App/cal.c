@@ -156,7 +156,7 @@ void save_cal_data(void)
 {
     cal_val.flag = CAL_FLAG_V2;
     flash_ferase_sector(FLASH_CAL_ADDR);
-    flash_program(FLASH_CAL_ADDR, (u8 *)&cal_val, (u16)sizeof(cal_val));
+    flash_program(FLASH_CAL_ADDR, (u8 *)&cal_val, (u8)sizeof(cal_val));
 }
 
 void read_cal_data(void)

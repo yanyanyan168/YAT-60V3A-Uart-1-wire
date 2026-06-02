@@ -79,7 +79,7 @@
 #define PWM_DUTY_DEF                (0U)
 /* Flash -------------------------------------------------------------------*/
 #define FLASH_INFO_SEC_H            (0x3FU)
-#define FLASH_PARAM_OFF             (0x00U)
-#define FLASH_CAL_OFF               (0x80U)
+#define FLASH_CAL_OFF               (0x00U)  /* 校准数据偏移：实际地址 0x3F00 */
+#define FLASH_CAL_SIZE              (0x80U)  /* 当前只使用 128 Bytes 校准区 */
 #define CAL_FLAG                    (0x5AA5U)
 #endif
