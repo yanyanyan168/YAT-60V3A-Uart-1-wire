@@ -61,28 +61,29 @@ static void pc_uart_print_current_line(char *name, u16 current_ma)
 
 static void pc_uart_print_voltage_line(char *name, u32 voltage_mv)
 {
-    u32 voltage_0p1v;
+    u16 voltage_0p1v;
 
-    voltage_0p1v = (voltage_mv + 50UL) / 100UL;
-    uart_printf("%s  %lu.%luV\n",
+    /* 充电器电压换算成 0.1V 后远小于 65535，用 u16 打印可避免 long printf。 */
+    voltage_0p1v = (u16)((voltage_mv + 50UL) / 100UL);
+    uart_printf("%s  %u.%uV\n",
                 name,
-                voltage_0p1v / 10UL,
-                voltage_0p1v % 10UL);
+                (u16)(voltage_0p1v / 10U),
+                (u16)(voltage_0p1v % 10U));
 }
 
 static void pc_uart_print_voltage_range_line(char *name, u32 low_mv, u32 high_mv)
 {
-    u32 low_0p1v;
-    u32 high_0p1v;
+    u16 low_0p1v;
+    u16 high_0p1v;
 
-    low_0p1v = (low_mv + 50UL) / 100UL;
-    high_0p1v = (high_mv + 50UL) / 100UL;
-    uart_printf("%s  %lu.%lu-%lu.%luV\n",
+    low_0p1v = (u16)((low_mv + 50UL) / 100UL);
+    high_0p1v = (u16)((high_mv + 50UL) / 100UL);
+    uart_printf("%s  %u.%u-%u.%uV\n",
                 name,
-                low_0p1v / 10UL,
-                low_0p1v % 10UL,
-                high_0p1v / 10UL,
-                high_0p1v % 10UL);
+                (u16)(low_0p1v / 10U),
+                (u16)(low_0p1v % 10U),
+                (u16)(high_0p1v / 10U),
+                (u16)(high_0p1v % 10U));
 }
 
 /**
@@ -117,15 +118,13 @@ static void pc_uart_print_param(void)
     uart_printf("\n预充定时 %umin\n", TIM_PRE);
     uart_printf("CC+CV定时 %uh\n", TIM_CCCV);
 
-    uart_printf("上拉电阻: %luk\n", R1);
-    uart_printf("下拉电阻: %luk\n", R2);
-    uart_printf("电流电阻: %lumR\n", Ra);
-    uart_printf("放大倍数\xFD: %lu\n", GAIN);
+    uart_printf("上拉电阻: %uk\n", (u16)R1);
+    uart_printf("下拉电阻: %uk\n", (u16)R2);
+    uart_printf("电流电阻: %umR\n", (u16)Ra);
+    uart_printf("放大倍数\xFD: %u\n", (u16)GAIN);
 
-    uart_printf("\n状态定义\n");
-    uart_printf("0空载 1检测 2握手 3预充 4CCCV 5满电\n");
-    uart_printf("6OVP 7预充超时 8OTP 9OCP 10NTC 11硬件 12欠压 13CCCV超时\n");
-    uart_printf("14BMS温度 15BMS异常 16超低压修复 17老化\n");
+    uart_printf("\n状态:0空载 1检测 2握手 3预充 4CCCV 5满电 6OVP 7预超 8OTP\n");
+    uart_printf("9OCP 10NTC 11硬件 12欠压 13CV超 14BMS温 15BMS异常 16修复 17老化\n");
 }
 
 /**
@@ -133,11 +132,11 @@ static void pc_uart_print_param(void)
   */
 static void pc_uart_print_batt(void)
 {
-    uart_printf("[BATT] vout=%u mV, curr=%u mA, ntc=%ld(0.1C)\r\n",
+    uart_printf("[BATT] vout=%u mV, curr=%u mA, ntc=%d(0.1C)\r\n",
                 val.vout,
                 val.curr,
-                val.i_ntc);
-    uart_printf("[BATT] state=%bu, flag=0x%bx, tick=%u\r\n",
+                (s16)val.i_ntc);
+    uart_printf("[BATT] state=%bu, flag=%bu, tick=%u\r\n",
                 (u8)ch_state,
                 pc_uart_pack_flag(),
                 timer_get_tick_ms());

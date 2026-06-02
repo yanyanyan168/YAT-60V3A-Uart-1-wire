@@ -45,55 +45,42 @@ static u8 idata s_tx_auto_tim;      /* DEBUG 自动上传计时，沿用 54.6V pc_uart_fu
 #define BMS_TEMP_FAULT_MASK          (U1W_B4_LOW_TEMP | U1W_B4_HIGH_TEMP)
 #define BMS_OTHER_FAULT_MASK         ((u8)(U1W_B4_FAULT_MASK & (u8)(~BMS_TEMP_FAULT_MASK)))
 
-typedef struct
-{
-    CH_STATUS_Types state;          /* 状态枚举。 */
-    char *name;                     /* DEBUG 打印用中文状态名。 */
-} CH_STATE_ATTR_T;
-
 /*
- * 状态属性表：
- * 1. BMS_HANDSHAKE 是等待通信配置阶段，输出关闭，握手成功后才进入CH_Check。
- * 2. BMS_TEMP_ERR 温度恢复后可继续充电，不清 Tim，便于保留累计充电时间。
- * 3. BMS_ERR 属于锁定类异常，只等拔电池恢复，不自动继续充电。
- * 4. 保护状态保留 Tim，方便 DEBUG 帧看到进入保护前累计充电时间。
+ * 状态名表：
+ * 1. 下标必须与 CH_STATUS_Types 枚举顺序一致。
+ * 2. 只用于串口日志显示，不参与状态机判断。
+ * 3. 直接索引比“状态值+字符串”的结构表更省 code，也少一次循环比较。
  */
-static CH_STATE_ATTR_T code s_ch_state_attr[] =
+static char * code s_ch_state_name[] =
 {
-    { CH_IDLE,        "空载"       },
-    { CH_Check,       "检测"       },
-    { BMS_HANDSHAKE,  "等待\xFD" "BMS握手"},
-    { CH_REPAIR,      "超低压修复" },
-    { CH_Pre1,        "预充"       },
-    { CH_CCCV,        "恒流恒压"   },
-    { CH_FULL,        "满电"       },
-    { CH_OVP,         "过\xFD压保护"   },
-    { CH_TimOut,      "预充超时"   },
-    { CH_OTP,         "过\xFD温保护"   },
-    { CH_OCP,         "过\xFD流保护"   },
-    { NTC_ERR,        "NTC异常"    },
-    { HW_ERR,         "硬件异常"   },
-    { CH_UVP,         "欠压保护"   },
-    { CCCV_TimOut,    "CCCV超时"   },
-    { BMS_TEMP_ERR,   "BMS温度异常"},
-    { BMS_ERR,        "BMS异常"    },
-    { CH_AGING,       "老化"       },
+    "空载",
+    "检测",
+    "等待\xFD" "BMS握手",
+    "预充",
+    "恒流恒压",
+    "满电",
+    "过\xFD压保护",
+    "预充超时",
+    "过\xFD温保护",
+    "过\xFD流保护",
+    "NTC异常",
+    "硬件异常",
+    "欠压保护",
+    "CCCV超时",
+    "BMS温度异常",
+    "BMS异常",
+    "超低压修复",
+    "老化",
 };
-
 
 /**
   * @brief  按状态属性表获取中文状态名。
   */
 static char *ch_state_name(CH_STATUS_Types state)
 {
-    u8 i;
-
-    for(i = 0U; i < ARRAY_SIZE(s_ch_state_attr); i++)
+    if((u8)state < ARRAY_SIZE(s_ch_state_name))
     {
-        if(s_ch_state_attr[i].state == state)
-        {
-            return s_ch_state_attr[i].name;
-        }
+        return s_ch_state_name[(u8)state];
     }
 
     return "未知";
@@ -111,17 +98,19 @@ static void ch_set_state(CH_STATUS_Types next_state, char *reason)
         return;
     }
 
-    uart_printf("状态:%s 到 %s",
+    /*
+     * 客户端现场仍依赖中文日志判断流程。
+     * 这里保留完整信息，但统一为一条 printf：
+     * 1. 减少多次 printf 调用和重复格式字符串，降低 C51 代码体积。
+     * 2. NTC 正常范围在 int 内，按 s16 打印，避免引入 long printf 格式。
+     */
+    uart_printf("状态:%s到%s 原因:%s V=%umV I=%umA NTC=%d\n",
                 ch_state_name(ch_state),
-                ch_state_name(next_state));
-    if(reason != 0)
-    {
-        uart_printf("，%s", reason);
-    }
-    uart_printf("，V=%umV I=%umA NTC=%ld\n",
+                ch_state_name(next_state),
+                (reason != 0) ? reason : "无",
                 val.vout,
                 val.curr,
-                val.i_ntc);
+                (s16)val.i_ntc);
 
     ch_state = next_state;
 }
@@ -152,22 +141,22 @@ static bit ch_check_protect_state(void)
 {
     if(ch_flag.ch_ntcErr != 0)
     {
-        ch_set_state(NTC_ERR, "内部NTC开路或短路");
+        ch_set_state(NTC_ERR, "NTC开短路");
         return 1;
     }
     else if(ch_flag.ch_hotErr != 0)
     {
-        ch_set_state(CH_OTP, "充电器高温");
+        ch_set_state(CH_OTP, "CH高温");
         return 1;
     }
     else if(ch_flag.ch_ovp != 0)
     {
-        ch_set_state(CH_OVP, "充电器高压");
+        ch_set_state(CH_OVP, "CH高压");
         return 1;
     }
     else if(ch_flag.ch_ocp != 0)
     {
-        ch_set_state(CH_OCP, "充电器OCP");
+        ch_set_state(CH_OCP, "CH OCP");
         return 1;
     }
 
@@ -242,14 +231,14 @@ static bit ch_bms_fault_check(void)
     if((st & U1W_B4_LOW_TEMP) != 0U)
     {
         uart_1_wire_set_charge_enable(0);
-        ch_set_state(BMS_TEMP_ERR, "BMS充电低温");
+        ch_set_state(BMS_TEMP_ERR, "BMS低温");
         return 1;
     }
 
     if((st & U1W_B4_HIGH_TEMP) != 0U)
     {
         uart_1_wire_set_charge_enable(0);
-        ch_set_state(BMS_TEMP_ERR, "BMS充电高温");
+        ch_set_state(BMS_TEMP_ERR, "BMS高温");
         return 1;
     }
 
@@ -260,42 +249,42 @@ static bit ch_bms_fault_check(void)
     if((st & U1W_B4_FAIL) != 0U)
     {
         uart_1_wire_set_charge_enable(0);
-        ch_set_state(BMS_ERR, "BMS电池包失效");
+        ch_set_state(BMS_ERR, "BMS失效");
         return 1;
     }
 
     if((st & U1W_B4_SHORT) != 0U)
     {
         uart_1_wire_set_charge_enable(0);
-        ch_set_state(BMS_ERR, "BMS短路保护");
+        ch_set_state(BMS_ERR, "BMS短路");
         return 1;
     }
 
     if((st & U1W_B4_OCP) != 0U)
     {
         uart_1_wire_set_charge_enable(0);
-        ch_set_state(BMS_ERR, "BMS过\xFD流保护");
+        ch_set_state(BMS_ERR, "BMS过\xFD流");
         return 1;
     }
 
     if((st & U1W_B4_MOS_HOT) != 0U)
     {
         uart_1_wire_set_charge_enable(0);
-        ch_set_state(BMS_ERR, "BMS充电MOS过\xFD温");
+        ch_set_state(BMS_ERR, "BMS MOS过\xFD温");
         return 1;
     }
 
     if((st & U1W_B4_OV) != 0U)
     {
         uart_1_wire_set_charge_enable(0);
-        ch_set_state(BMS_ERR, "BMS单节过\xFD充");
+        ch_set_state(BMS_ERR, "BMS过\xFD充");
         return 1;
     }
 
     if((st & U1W_B4_TIMEOUT) != 0U)
     {
         uart_1_wire_set_charge_enable(0);
-        ch_set_state(BMS_ERR, "BMS充电超时");
+        ch_set_state(BMS_ERR, "BMS超时");
         return 1;
     }
 
@@ -462,7 +451,7 @@ static void idle_ck(void)
         if(++s_cut[2] >= 50U)
         {
             uart_1_wire_reset_link();
-            ch_set_state(CH_IDLE, "电池拔出，转空载");
+            ch_set_state(CH_IDLE, "拔电池");
         }
     }
     else
@@ -596,7 +585,7 @@ void usr_ch_func(void)
                     {
                         uart_1_wire_reset_link();
                         uart_1_wire_set_charge_enable(0);
-                        ch_set_state(BMS_HANDSHAKE, "检测到电池接入，开始通信");
+                        ch_set_state(BMS_HANDSHAKE, "插电池");
                     }
                 }
                 else
@@ -607,7 +596,7 @@ void usr_ch_func(void)
 
             case BMS_HANDSHAKE:
                 /*
-                 * 等待BMS握手成功：
+                 * 等待握手成功：
                  * - 输出保持关闭；
                  * - 等待协议层完成 A0/A1/A4/A6/A7；
                  * - 通信连续失败进入BMS_ERR；
@@ -622,13 +611,13 @@ void usr_ch_func(void)
                 if(Tim.s >= BMS_HANDSHAKE_TIMEOUT_S)
                 {
                     uart_1_wire_set_charge_enable(0);
-                    ch_set_state(BMS_ERR, "BMS握手20秒超时");
+                    ch_set_state(BMS_ERR, "握手超时");
                 }
                 else if(val.vout < vSTART)
                 {
                     if(++s_cut[0] >= 50U)
                     {
-                        ch_set_state(CH_UVP, "等待\xFD握手时电池电压低于起充阈值");
+                        ch_set_state(CH_UVP, "握手低压");
                     }
                 }
                 else
@@ -641,7 +630,7 @@ void usr_ch_func(void)
                     }
                     else if(uart_1_wire_is_online() != 0)
                     {
-                        ch_set_state(CH_Check, "BMS握手成功");
+                        ch_set_state(CH_Check, "握手成功");
                     }
                     else
                     {
@@ -666,7 +655,7 @@ void usr_ch_func(void)
                 {
                     if(++s_cut[0] >= 50U)
                     {
-                        ch_set_state(CH_UVP, "电池电压低于起充阈值");
+                        ch_set_state(CH_UVP, "电池低压");
                     }
                 }
                 else
@@ -683,22 +672,22 @@ void usr_ch_func(void)
                     }
                     else if(uart_1_wire_is_online() == 0)
                     {
-                        ch_set_state(BMS_HANDSHAKE, "等待\xFD" "BMS握手成功");
+                        ch_set_state(BMS_HANDSHAKE, "等握手");
                     }
                     else if(val.vout < vPRE)
                     {
                         uart_1_wire_set_charge_enable(1);
-                        ch_set_state(CH_REPAIR, "通信正\xFD常，进入超低压修复");
+                        ch_set_state(CH_REPAIR, "通信OK进修复");
                     }
                     else if(val.vout < pre_end_voltage_mv)
                     {
                         uart_1_wire_set_charge_enable(1);
-                        ch_set_state(CH_Pre1, "通信正\xFD常，进入预充");
+                        ch_set_state(CH_Pre1, "通信OK进预充");
                     }
                     else
                     {
                         uart_1_wire_set_charge_enable(1);
-                        ch_set_state(CH_CCCV, "通信正\xFD常，进入恒流恒压");
+                        ch_set_state(CH_CCCV, "通信OK进CCCV");
                     }
                 }
                 break;
@@ -727,13 +716,13 @@ void usr_ch_func(void)
                 if(Tim.min >= TIM_PRE)
                 {
                     uart_1_wire_set_charge_enable(0);
-                    ch_set_state(CH_TimOut, "超低压修复超时");
+                    ch_set_state(CH_TimOut, "修复超时");
                 }
                 else if(val.vout >= vPRE)
                 {
                     if(++s_cut[0] >= 50U)
                     {
-                        ch_set_state(CH_Pre1, "修复结束，进入预充");
+                        ch_set_state(CH_Pre1, "修复完成");
                     }
                 }
                 else
@@ -779,7 +768,7 @@ void usr_ch_func(void)
                 {
                     if(++s_cut[0] >= 50U)
                     {
-                        ch_set_state(CH_CCCV, "预充结束，进入恒流恒压");
+                        ch_set_state(CH_CCCV, "预充完成");
                     }
                 }
                 else
@@ -830,7 +819,7 @@ void usr_ch_func(void)
                     {
                         uart_1_wire_set_charge_enable(0);
                         uart_1_wire_start_full_display();
-                        ch_set_state(CH_FULL, "CCCV转FULL");
+                        ch_set_state(CH_FULL, "转满电");
                     }
                 }
                 else
@@ -854,7 +843,7 @@ void usr_ch_func(void)
                     if(++s_cut[0] >= 50U)
                     {
                         uart_1_wire_stop_full_display();
-                        ch_set_state(CH_Check, "满电后电压回落，重新检测");
+                        ch_set_state(CH_Check, "满电回落");
                     }
                 }
                 else
@@ -876,12 +865,12 @@ void usr_ch_func(void)
 
                 if(ch_bms_other_fault_active() != 0)
                 {
-                    ch_set_state(BMS_ERR, "BMS温度恢复前出现其它异常");
+                    ch_set_state(BMS_ERR, "BMS其它异常");
                 }
                 else if((uart_1_wire_is_online() != 0) && (ch_bms_temp_fault_active() == 0))
                 {
                     uart_1_wire_clear_error();
-                    ch_set_state(CH_Check, "BMS温度恢复，继续充电");
+                    ch_set_state(CH_Check, "BMS温度恢复");
                 }
                 break;
 
@@ -899,7 +888,7 @@ void usr_ch_func(void)
 
             case CH_OTP:
                 /*
-                 * 充电器高温保护：温度恢复后回检测状态。
+                 * 高温保护：温度恢复后回检测状态。
                  */
                 ch_output_all_off();
                 RGed_Flash(50);
