@@ -18,16 +18,11 @@
 #define MODEL_NAME                  "60V3A"                 /* 机种名称 */
 #define VERSION                     "V0.01"                 /* 软件版本号 */
 #define JIZHONG                     (6030U)                  /* 机种编号/项目识别码，按上位机约定保留 */
-#define V_RATED_MV                  (63000UL)                /* 额定输出电压，单位：mV */
-#define V_MAX_MV                    (64300UL)                /* 最高目标电压/保护参考，单位：mV */
-#define I_RATED_MA                  (3000U)                  /* 额定输出电流，单位：mA */
 
 /* 系统时基 ------------------------------------------------------------*/
 #define SYS_CLK_HZ                  (24000000UL)             /* 系统主频，单位：Hz */
 #define TASK_10MS                   (10U)                    /* 主循环基础任务周期，单位：ms */
-#define ADC_PERIOD_MS               (10U)                    /* ADC 采样/处理周期，单位：ms */
 #define COM_TIMEOUT_MS              (2000U)                  /* 一线通信整体超时时间，单位：ms */
-#define PROTO_TIMEOUT_MS            (30U)                    /* 单帧协议等待超时时间，单位：ms */
 #define UART_TX_WAIT                (60000UL)                /* 串口发送等待保护计数，防止死等 */
 
 /* ADC 换算参数 --------------------------------------------------------*/
@@ -62,8 +57,7 @@
 #define iOCP_OK                     (3200U)                  /* 过流恢复阈值，单位：mA */
 #define TIM_PRE                     (30U)                    /* 预充最长时间，单位：min */
 #define TIM_CCCV                    (480U)                   /* 恒流恒压最长时间，单位：min */
-#define RELAY_OFF_MS                (1000U)                  /* 继电器关闭保持时间，单位：ms */
-#define DUMMY_LOAD_MS               (3000U)                  /* 假负载/放电等待时间，单位：ms */
+
 
 /* NTC 温度阈值 --------------------------------------------------------*/
 #define T_HOT_ERR                   (1050U)                  /* NTC 高温保护阈值，单位：0.1℃，1050=105.0℃ */
@@ -79,17 +73,13 @@
 #define CAL_FRAME_LEN               (16U)                    /* 校准帧最大长度 */
 #define COM_FRAME_LEN               (32U)                    /* 一线通信帧最大长度 */
 #define U1W_MASTER                  (0x10U)                  /* 一线通信主机地址/设备标识 */
-#define U1W_B6_TYPE_DEF             (0x01U)                  /* B6 命令默认类型 */
-#define U1W_B6_DATA_DEF             (0x01U)                  /* B6 命令默认数据 */
+
 
 /* PWM DAC 参数 --------------------------------------------------------*/
 #define PWM_FREQ_HZ                 (10000UL)                /* PWM DAC 频率，单位：Hz */
 #define PWM_DUTY_DEF                (0U)                     /* PWM 默认占空比 */
 
-/* Flash / EEPROM 校准区配置 ------------------------------------------*/
-#define FLASH_INFO_SEC_H            (0x3FU)                  /* 用户 EEPROM 页高地址：0x3Fxx */
-#define FLASH_CAL_OFF               (0x00U)                  /* 校准数据页内偏移，实际地址：0x3F00 */
-#define FLASH_CAL_SIZE              (0x80U)                  /* 当前只使用 128 Bytes 校准区：0x3F00~0x3F7F */
+/* Flash 校准区配置 ------------------------------------------------------*/
 #define CAL_FLAG                    (0x5AA5U)                /* 校准数据有效标志 */
 
 #endif
