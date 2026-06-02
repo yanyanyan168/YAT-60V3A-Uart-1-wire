@@ -396,19 +396,48 @@ static u16 ch_get_target_current_ma(void)
 /**
   * @brief  获取 CCCV 阶段实际使用的目标电流，单位：mA。
   * @param  target_current_ma  协议和本机限幅后的目标电流。
-  * @note   当 B1 上报的最高单节电压达到 4.195V 后，
-  *         每 0.2 秒最多降低 0.1A，避免 10ms 周期内连续快速降流。
+  *
+  * @note   降流条件：
+  *         当 B1 上报的最高单节电压 cell_max_mv >= 4.195V 时，
+  *         认为电池已经接近满充，需要缓慢降低充电电流。
+  *
+  * @note   降流速度：
+  *         每 0.2 秒最多降低 0.1A，避免在 10ms 任务周期内连续快速降流。
+  *
+  * @note   电流下限：
+  *         最低只降到 iGED，不会降到 0。
+  *         iGED 是满电/转灯电流，继续低于该值意义不大。
+  *
+  * @note   恢复策略：
+  *         如果最高单节电压低于 4.195V，本函数只停止继续降流，
+  *         不主动升流，避免在阈值附近反复升降造成电流抖动。
+  *
+  * @retval 本次 CCCV 实际使用的目标电流，单位 mA。
   */
 static u16 ch_get_cccv_work_current_ma(u16 target_current_ma)
 {
+    /*
+     * 初次进入 CCCV 时，s_cccv_curr_limit_ma 为 0，
+     * 先使用协议/本机限幅后的目标电流。
+     *
+     * 如果协议目标电流变小，则同步降低当前限流值，
+     * 防止动态限流值高于新的协议目标值。
+     */
     if((s_cccv_curr_limit_ma == 0U) || (s_cccv_curr_limit_ma > target_current_ma))
     {
         s_cccv_curr_limit_ma = target_current_ma;
         s_cccv_derate_cnt = 0U;
     }
 
+    /*
+     * B1 上报最高单节电压达到 4.195V 后开始缓慢降流。
+     */
     if(uart_1_wire.cell_max_mv >= CCCV_CELL_DERATE_MV)
     {
+        /*
+         * 10ms 调用一次，累计 20 次约等于 0.2 秒。
+         * 未到时间前不降流。
+         */
         if(s_cccv_derate_cnt < CCCV_DERATE_INTERVAL_10MS)
         {
             s_cccv_derate_cnt++;
@@ -417,6 +446,9 @@ static u16 ch_get_cccv_work_current_ma(u16 target_current_ma)
         {
             s_cccv_derate_cnt = 0U;
 
+            /*
+             * 每次降低 100mA，最低限制到 iGED。
+             */
             if(s_cccv_curr_limit_ma > (u16)(iGED + CCCV_DERATE_STEP_MA))
             {
                 s_cccv_curr_limit_ma -= CCCV_DERATE_STEP_MA;
@@ -429,6 +461,10 @@ static u16 ch_get_cccv_work_current_ma(u16 target_current_ma)
     }
     else
     {
+        /*
+         * 低于 4.195V 时，不继续降流；
+         * 也不主动升流，避免电压在阈值附近抖动时电流来回变化。
+         */
         s_cccv_derate_cnt = 0U;
     }
 
