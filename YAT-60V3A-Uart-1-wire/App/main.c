@@ -11,11 +11,11 @@
 #include "common.h"
 
 bit flg_cal_mode = 0;     /* 0: 充电流程  1: DEBUG 校准流程 */
+data u16 next_10ms;
 
 void main(void)
 {
     Sys_Init();
-    calVal_Init();
     read_cal_data();
     uart_1_wire_init();
 

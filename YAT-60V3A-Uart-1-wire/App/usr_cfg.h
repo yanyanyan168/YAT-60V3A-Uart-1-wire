@@ -73,11 +73,16 @@
 #define CAL_FRAME_LEN               (16U)                    /* 校准帧最大长度 */
 #define COM_FRAME_LEN               (32U)                    /* 一线通信帧最大长度 */
 #define U1W_MASTER                  (0x10U)                  /* 一线通信主机地址/设备标识 */
+#define U1W_DEBUG_EN                (0U)                     /* 1=打开单线轻量日志；0=关闭，节省代码空间 */
+#define U1W_DEBUG_PARSE_EN          (0U)                     /* 1=额外打印解析通过日志；默认关闭，省代码 */
 
 
 /* PWM DAC 参数 --------------------------------------------------------*/
 #define PWM_FREQ_HZ                 (10000UL)                /* PWM DAC 频率，单位：Hz */
-#define PWM_DUTY_DEF                (0U)                     /* PWM 默认占空比 */
+
+/* 电流 PWM 预置：mA * mohm * 放大倍数 / 5V。 */
+#define CC(x_ma)                    \
+    (u16)(((((((u32)(x_ma) * Ra * GAIN) + 500UL) / 1000UL) * (PWMMAX + 1UL)) + (ADC_VREF_MV / 2UL)) / ADC_VREF_MV)
 
 /* Flash 校准区配置 ------------------------------------------------------*/
 #define CAL_FLAG                    (0x5AA5U)                /* 校准数据有效标志 */

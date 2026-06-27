@@ -50,40 +50,17 @@ static u8 pc_uart_pack_flag(void)
 
 static void pc_uart_print_current_line(char *name, u16 current_ma)
 {
-    u16 current_0p1a;
-
-    current_0p1a = (u16)(((u32)current_ma + 50UL) / 100UL);
-    uart_printf("%s  %u.%uA\n",
-                name,
-                (u16)(current_0p1a / 10U),
-                (u16)(current_0p1a % 10U));
+    uart_printf("%s  %umA\n", name, current_ma);
 }
 
-static void pc_uart_print_voltage_line(char *name, u32 voltage_mv)
+static void pc_uart_print_voltage_line(char *name, u16 voltage_mv)
 {
-    u16 voltage_0p1v;
-
-    /* 充电器电压换算成 0.1V 后远小于 65535，用 u16 打印可避免 long printf。 */
-    voltage_0p1v = (u16)((voltage_mv + 50UL) / 100UL);
-    uart_printf("%s  %u.%uV\n",
-                name,
-                (u16)(voltage_0p1v / 10U),
-                (u16)(voltage_0p1v % 10U));
+    uart_printf("%s  %umV\n", name, voltage_mv);
 }
 
-static void pc_uart_print_voltage_range_line(char *name, u32 low_mv, u32 high_mv)
+static void pc_uart_print_voltage_range_line(char *name, u16 low_mv, u16 high_mv)
 {
-    u16 low_0p1v;
-    u16 high_0p1v;
-
-    low_0p1v = (u16)((low_mv + 50UL) / 100UL);
-    high_0p1v = (u16)((high_mv + 50UL) / 100UL);
-    uart_printf("%s  %u.%u-%u.%uV\n",
-                name,
-                (u16)(low_0p1v / 10U),
-                (u16)(low_0p1v % 10U),
-                (u16)(high_0p1v / 10U),
-                (u16)(high_0p1v % 10U));
+    uart_printf("%s  %u-%umV\n", name, low_mv, high_mv);
 }
 
 /**
@@ -108,8 +85,6 @@ static void pc_uart_print_param(void)
     pc_uart_print_voltage_line("高压保护", vDCOVP);
 
     uart_printf("\n内部NTC:\n");
-    uart_printf("NTC开路保护 ADC>%u\n", 4050U);
-    uart_printf("NTC短路保护 ADC<%u\n", 50U);
     uart_printf("高温关断 ADC>%u\n", T_HOT_ERR);
     uart_printf("高温恢复 ADC<%u\n", T_HOT_ERR_OK);
     uart_printf("高温降额 ADC>%u\n", T_CH_HOT);
@@ -123,8 +98,9 @@ static void pc_uart_print_param(void)
     uart_printf("电流电阻: %umR\n", (u16)Ra);
     uart_printf("放大倍数\xFD: %u\n", (u16)GAIN);
 
-    uart_printf("\n状态:0空载 1检测 2握手 3预充 4CCCV 5满电 6OVP 7预超 8OTP\n");
-    uart_printf("9OCP 10NTC 11硬件 12欠压 13CV超 14BMS温 15BMS异常 16修复 17老化\n");
+    uart_printf("\n状态:\n0空载\n1 检测\n2 握手\n3 预充\n4 CCCV\n5 满电\n6 OVP\n7 预超\n8 OTP\n");
+    uart_printf("9 OCP\n10 NTC\n11 硬件\n12 欠压\n13 CV超时\n14 BMS温\n15 BMS异常\n16 修复\n17 老化\n");
+    uart_printf("当前状态: %u\n", (u16)ch_state);
 }
 
 /**
@@ -187,18 +163,14 @@ static void pc_uart_send_auto_frame(void)
     ch_uart_send_buf((char *)s_pc_tx_buf, PC_UART_FRAME_LEN);
 }
 
-void pc_uart_auto_send_enable(bit enable)
-{
-    s_tx_auto = enable;
-}
+
 
 /**
   * @brief  DEBUG 串口任务。
   *
-  * @param  auto_tim: 10ms 自增计数，沿用 54.6V pc_uart_func(auto_tim) 形参。
   * @retval 1: 收到 "*RST"，主流程切入校准；0: 保持当前充电流程。
   */
-u8 pc_uart_func(u8 auto_tim)
+u8 pc_uart_func(void)
 {
     u8 data_len;
     u8 i;
@@ -241,21 +213,13 @@ u8 pc_uart_func(u8 auto_tim)
             }
             else if((s_pc_rx_buf[0] == 'E') && (s_pc_rx_buf[1] == 'N') && (s_pc_rx_buf[2] == 'A'))
             {
-                s_tx_auto = 1;
+                if(++s_auto_count >= 20U)
+                {
+                    s_tx_auto = 1;
+                    s_auto_count = 0U;
+                    pc_uart_send_auto_frame();
+                }
             }
-            else if((s_pc_rx_buf[0] == 'D') && (s_pc_rx_buf[1] == 'I') && (s_pc_rx_buf[2] == 'S'))
-            {
-                s_tx_auto = 0;
-            }
-        }
-    }
-
-    if(((auto_tim & 0x01U) != 0U) && (s_tx_auto != 0))
-    {
-        if(++s_auto_count >= 20U)
-        {
-            s_auto_count = 0U;
-            pc_uart_send_auto_frame();
         }
     }
     

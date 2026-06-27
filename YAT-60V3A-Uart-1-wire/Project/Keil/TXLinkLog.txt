@@ -1,0 +1,44 @@
+[06-24 17:43:39]Log start
+[06-24 17:43:39]Serial init start!
+[06-24 17:43:39]Download driver ok!
+[06-24 17:43:39]uart_txm8c1200_set_driver:0x0
+[06-24 17:43:39]user uart set driver ok!
+[06-24 17:43:39]TXLink ready ok!
+[06-24 17:43:41]TXLink init failed!
+[06-24 17:43:52]DllUv3Cap:0x2
+[06-24 17:43:52]DllUv3Cap:0x6d
+[06-24 17:43:52]DllUv3Cap:0x1
+[06-24 17:43:52]Serial init start!
+[06-24 17:43:53]uart_txm8c1200_set_driver:0x0
+[06-24 17:43:53]user uart set driver ok!
+[06-24 17:43:53]TXLink ready ok!
+[06-24 17:43:54]TXLink init failed!
+[06-24 17:43:54]uart_txm8c1200_set_driver:0x0
+[06-24 17:43:54]user uart set driver ok!
+[06-24 17:43:54]TXLink ready ok!
+[06-24 17:43:55]TXLink init failed!
+[06-24 17:43:55]uart_txm8c1200_set_driver:0x0
+[06-24 17:43:55]user uart set driver ok!
+[06-24 17:43:55]TXLink ready ok!
+[06-24 17:43:56]TXLink init failed!
+[06-24 17:43:57]uart_txm8c1200_set_driver:0x0
+[06-24 17:43:57]user uart set driver ok!
+[06-24 17:43:57]TXLink ready ok!
+[06-24 17:43:58]TXLink init failed!
+[06-24 17:43:58]uart_txm8c1200_set_driver:0x0
+[06-24 17:43:58]user uart set driver ok!
+[06-24 17:43:58]TXLink ready ok!
+[06-24 17:43:59]TXLink init failed!
+[06-24 17:43:59]uart_txm8c1200_set_driver:0x0
+[06-24 17:43:59]user uart set driver ok!
+[06-24 17:43:59]TXLink ready ok!
+[06-24 17:44:00]TXLink init failed!
+[06-24 17:44:00]Serial close ok!
+[06-24 17:55:37]DllUv3Cap:0x2
+[06-24 17:55:37]DllUv3Cap:0x64
+[06-27 15:05:40]DllUv3Cap:0x2
+[06-27 15:05:40]DllUv3Cap:0x64
+[06-27 15:56:23]DllUv3Cap:0x2
+[06-27 15:56:23]DllUv3Cap:0x64
+[06-27 17:11:50]DllUv3Cap:0x2
+[06-27 17:11:50]DllUv3Cap:0x64

@@ -22,6 +22,10 @@
 #include "common.h"
 
 #define CAL_FLAG_V2                         CAL_FLAG
+#define CAL_ADC_VOL(x_mv)                   \
+    (u16)((((u32)(x_mv) * ADC_FULL) + ((ADC_VREF_MV * ((R1 + R2) / R2)) / 2UL)) / (ADC_VREF_MV * ((R1 + R2) / R2)))
+#define CAL_ADC_CURR(x_ma)                  \
+    (u16)(((((((u32)(x_ma) * Ra * GAIN) + 500UL) / 1000UL) * ADC_FULL) + (ADC_VREF_MV / 2UL)) / ADC_VREF_MV)
 
 xdata CAL_VAL_Types cal_val;
 
@@ -34,55 +38,8 @@ typedef struct
 static cal_load_t idata s_load_val;
 static u8 idata s_cal_v_step;
 static u8 idata s_cc_confirm_count;
-static u16 idata s_cal_pwm_val;
 static u8 xdata s_cal_tx_buf[16];
 static u8 xdata s_cal_rx_buf[CAL_FRAME_LEN];
-
-static u16 cal_adc_from_voltage_mv(u16 voltage_mv)
-{
-    u32 tmp;
-    u32 den;
-
-    tmp = (u32)voltage_mv * R2 * ADC_FULL;
-    den = (u32)ADC_VREF_MV *
-          (R1 + R2);
-
-    if(den == 0UL)
-    {
-        return 0;
-    }
-
-    tmp = (tmp + (den >> 1)) / den;
-    if(tmp > ADC_FULL)
-    {
-        tmp = ADC_FULL;
-    }
-
-    return (u16)tmp;
-}
-
-static u16 cal_adc_from_current_ma(u16 current_ma)
-{
-    u32 tmp;
-    u32 den;
-
-    tmp = (u32)current_ma * Ra *
-          GAIN * ADC_FULL;
-    den = (u32)ADC_VREF_MV * 1000UL;
-
-    if(den == 0UL)
-    {
-        return 0;
-    }
-
-    tmp = (tmp + (den >> 1)) / den;
-    if(tmp > ADC_FULL)
-    {
-        tmp = ADC_FULL;
-    }
-
-    return (u16)tmp;
-}
 
 void calVal_Init(void)
 {
@@ -90,29 +47,31 @@ void calVal_Init(void)
     cal_val.I4_adc = 0;
 
     cal_val.I1_val = iMAX;
-    cal_val.I1_adc = cal_adc_from_current_ma(cal_val.I1_val);
+    cal_val.I1_adc = CAL_ADC_CURR(iMAX);
     cal_val.I2_val = (u16)((u32)iMAX * 3UL / 4UL);
-    cal_val.I2_adc = cal_adc_from_current_ma(cal_val.I2_val);
+    cal_val.I2_adc = CAL_ADC_CURR((u16)((u32)iMAX * 3UL / 4UL));
     cal_val.I3_val = iPRE;
-    cal_val.I3_adc = cal_adc_from_current_ma(cal_val.I3_val);
+    cal_val.I3_adc = CAL_ADC_CURR(iPRE);
 
     cal_val.V1_val = SET_vMAX;
     cal_val.V2_val = (u16)((u32)SET_vMAX * 15UL / 16UL);
     cal_val.V3_val = (u16)((u32)SET_vMAX * 14UL / 16UL);
     cal_val.V4_val = (u16)((u32)SET_vMAX * 13UL / 16UL);
 
-    cal_val.Vo_V1_adc = cal_adc_from_voltage_mv(cal_val.V1_val);
+    cal_val.Vo_V1_adc = CAL_ADC_VOL(SET_vMAX);
     cal_val.Vdc_V1_adc = cal_val.Vo_V1_adc;
-    cal_val.Vo_V2_adc = cal_adc_from_voltage_mv(cal_val.V2_val);
+    cal_val.Vo_V2_adc = CAL_ADC_VOL((u16)((u32)SET_vMAX * 15UL / 16UL));
     cal_val.Vdc_V2_adc = cal_val.Vo_V2_adc;
-    cal_val.Vo_V3_adc = cal_adc_from_voltage_mv(cal_val.V3_val);
+    cal_val.Vo_V3_adc = CAL_ADC_VOL((u16)((u32)SET_vMAX * 14UL / 16UL));
     cal_val.Vdc_V3_adc = cal_val.Vo_V3_adc;
-    cal_val.Vo_V4_adc = cal_adc_from_voltage_mv(cal_val.V4_val);
+    cal_val.Vo_V4_adc = CAL_ADC_VOL((u16)((u32)SET_vMAX * 13UL / 16UL));
     cal_val.Vdc_V4_adc = cal_val.Vo_V4_adc;
 
     cal_val.cv_pwm = PWMMAX;
     cal_val.cv_val = SET_vMAX;
-    cal_val.cc_pwm = PWMMAX;
+
+    /* 无校准时按硬件链路预置：I * 采样电阻 * 放大倍数 / 5V。 */
+    cal_val.cc_pwm = CC(iMAX);
     cal_val.cc_val = iMAX;
 }
 
@@ -134,23 +93,6 @@ u16 cal_current_to_duty(u16 current_ma)
     return (u16)duty;
 }
 
-u16 cal_voltage_to_duty(u16 voltage_mv)
-{
-    u32 duty;
-
-    if((cal_val.cv_val == 0U) || (cal_val.cv_pwm == 0U))
-    {
-        return 0;
-    }
-
-    duty = (u32)voltage_mv * cal_val.cv_pwm / cal_val.cv_val;
-    if(duty > PWMMAX)
-    {
-        duty = PWMMAX;
-    }
-
-    return (u16)duty;
-}
 
 void save_cal_data(void)
 {
@@ -222,38 +164,9 @@ static void cal_parse_load_value(u8 *rx_buf, u8 len)
     }
 }
 
-static u16 cal_abs_diff_u16(u16 a, u16 b)
-{
-    return (a >= b) ? (u16)(a - b) : (u16)(b - a);
-}
 
-static u16 cal_pwm_limit(u32 duty)
-{
-    if(duty > PWMMAX)
-    {
-        duty = PWMMAX;
-    }
 
-    return (u16)duty;
-}
 
-static u16 cal_scale_pwm(u16 base, u16 num)
-{
-    return cal_pwm_limit((u32)base * num / 16U);
-}
-
-static u16 cal_voltage_pwm_step(u16 diff_mv)
-{
-    u16 step;
-
-    step = (u16)(diff_mv / 100U);
-    if(step == 0U)
-    {
-        step = 1U;
-    }
-
-    return step;
-}
 
 static u16 cal_curr_adc_offset(void)
 {
@@ -268,8 +181,6 @@ static u16 cal_curr_adc_offset(void)
 static void cal_exec_task(u8 task)
 {
     char echo_ok[4];
-    u16 diff_mv;
-    u16 duty_step;
 
     switch(task)
     {
@@ -279,10 +190,8 @@ static void cal_exec_task(u8 task)
         SET_BAUD(BAUD_9600);
         s_cal_v_step = 0U;
         s_cc_confirm_count = 0U;
-        s_cal_pwm_val = cal_val.cv_pwm;
         cal_val.I4_adc = adc.curr;
         set_Curr_Duty(PWMMAX);
-        set_Vol_Duty(s_cal_pwm_val);
         break;
 
     case '#':
@@ -290,35 +199,14 @@ static void cal_exec_task(u8 task)
         {
         default:
         case 0:
-            diff_mv = cal_abs_diff_u16(s_load_val.voltage_mv, SET_vMAX);
-            if((s_load_val.voltage_mv != 0U) && (diff_mv > 300U))
+            cal_val.Vo_V1_adc = adc.vout;
+            cal_val.Vdc_V1_adc = cal_val.Vo_V1_adc;
+            if(s_load_val.voltage_mv != 0U)
             {
-                duty_step = cal_voltage_pwm_step(diff_mv);
-                if(s_load_val.voltage_mv < SET_vMAX)
-                {
-                    s_cal_pwm_val = cal_pwm_limit((u32)s_cal_pwm_val + duty_step);
-                }
-                else
-                {
-                    s_cal_pwm_val = (s_cal_pwm_val > duty_step) ?
-                                    (u16)(s_cal_pwm_val - duty_step) : 0U;
-                }
-                set_Vol_Duty(s_cal_pwm_val);
+                cal_val.V1_val = s_load_val.voltage_mv;
             }
-            else
-            {
-                cal_val.Vo_V1_adc = adc.vout;
-                cal_val.Vdc_V1_adc = cal_val.Vo_V1_adc;   /* 本项目无独立 VDC，保留字段镜像 Vo。 */
-                if(s_load_val.voltage_mv != 0U)
-                {
-                    cal_val.V1_val = s_load_val.voltage_mv;
-                    cal_val.cv_val = s_load_val.voltage_mv;
-                }
-                cal_val.cv_pwm = s_cal_pwm_val;
-                set_Vol_Duty(cal_scale_pwm(s_cal_pwm_val, 15U));
-                set_Curr_Duty(PWMMAX);
-                s_cal_v_step = 1U;
-            }
+            set_Curr_Duty(PWMMAX);
+            s_cal_v_step = 1U;
             cal_tx_str_crc("#ADJ");
             break;
 
@@ -329,7 +217,6 @@ static void cal_exec_task(u8 task)
             {
                 cal_val.V2_val = s_load_val.voltage_mv;
             }
-            set_Vol_Duty(cal_scale_pwm(s_cal_pwm_val, 13U));
             s_cal_v_step = 2U;
             cal_tx_str_crc("#ADJ");
             break;
@@ -341,7 +228,6 @@ static void cal_exec_task(u8 task)
             {
                 cal_val.V3_val = s_load_val.voltage_mv;
             }
-            set_Vol_Duty(cal_scale_pwm(s_cal_pwm_val, 11U));
             s_cal_v_step = 3U;
             cal_tx_str_crc("#ADJ");
             break;
@@ -358,7 +244,6 @@ static void cal_exec_task(u8 task)
             {
                 cal_val.V4_val = s_load_val.voltage_mv;
             }
-            set_Vol_Duty(cal_val.cv_pwm);
             s_cal_v_step = 0U;
             cal_tx_str_crc("#OK");
             break;
@@ -409,7 +294,6 @@ static void cal_exec_task(u8 task)
     case 'S':
         save_cal_data();
         set_Curr_Duty(0);
-        set_Vol_Duty(0);
         cal_tx_str_crc("SAVE");
         break;
 
@@ -445,17 +329,14 @@ void usr_cal_func(void)
     u8 len;
     u8 i;
     u8 task;
-    u16 next_10ms;
 
-    relay_on();
-    repair_output_off();
-    vadj_high();
-    fan_on();
+    DCJK = 1;
+    REPAIR_OUTPUT = 0;
+    VADJ = 1;
+    FAN = 1;
     s_cal_v_step = 0U;
     s_cc_confirm_count = 0U;
-    s_cal_pwm_val = cal_val.cv_pwm;
     set_Curr_Duty(PWMMAX);
-    set_Vol_Duty(s_cal_pwm_val);
     next_10ms = timer_deadline_ms(TASK_10MS);
 
     while(flg_cal_mode != 0)
@@ -489,12 +370,9 @@ void usr_cal_func(void)
 
         if(timer_period_elapsed(&next_10ms, TASK_10MS) != 0)
         {
-            flg_10ms = 0;
             wdt_feed();
             adc_sample_all();
             Ged_Flash(50);
         }
     }
-
-    gpio_output_safe_off();
 }

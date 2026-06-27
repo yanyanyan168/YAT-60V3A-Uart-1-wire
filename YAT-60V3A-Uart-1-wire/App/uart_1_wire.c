@@ -1,17 +1,21 @@
 /**
   ******************************************************************************
   * @file    uart_1_wire.c
-  * @brief   P30 单线 UART 通信协议实现，充电器专用版。
+  * @brief   P30 单线 UART 通信协议实现，异步轮询版。
   *
-  * 本版根据 5 轮讨论后的边界整理：
-  * 1. 只实现 PDF 6.1 充电器流程：A0 -> A1 -> A4 -> A6 -> A7 -> B1 -> B3 -> B4 -> B6。
-  * 2. 进入正常充电后，只循环 B1/B3/B4/B6。
-  * 3. CHK 只使用普通累加和：CHK = CMD + DATA1 + ... + DATAN；不实现 ZTR PDU 专用校验。
-  * 4. 默认按电池包通讯字节序处理 16bit 数据，并保留 U1W_U16_LSB_FIRST 供抓包后修正。
-  * 5. 从机回复采用 FIFO 字节数连续两次不变来模拟接收空闲，然后统一取帧校验。
-  * 6. 发送间隔由主充电流程控制，本模块不再自动空转 gap，也不在 10ms 任务中自动发送。
-  * 7. 单帧超时或帧错误只重发当前命令，不推进 step；连续失败超过上限后只上报 retry_over，主流程处理。
-  * 8. 不处理 BT+ 拔包判断；拔包回待机由主充电流程完成，需要重连时调用 uart_1_wire_reset_link()。
+  * 主流程：
+  * 1. 接收：FIFO 字节进入缓存后，从头 for 扫描已知 CMD。
+  *    CMD 已知、长度够、CHK 正确，才认为是合法帧并更新数据。
+  *    校验失败不清空整包，而是从下一字节继续找帧头。
+  *
+  * 2. 发送：不再等待某一帧回复。
+  *    ch.c 设置 STOP / HANDSHAKE / CHARGE 阶段后，本文件每 100ms 发一帧。
+  *    HANDSHAKE 阶段轮询 A0/A1/A4/A6/A7/B1/B3/B4。
+  *    CHARGE 阶段轮询 B1/B3/B4/B6，B6 固定要求打开充电 MOS。
+  *
+  * 3. 超时：
+  *    2 秒没有任意合法帧，通信超时。
+  *    3 秒关键帧没有刷新，也判通信超时。
   ******************************************************************************
   */
 
@@ -20,68 +24,119 @@
 #include "fifo.h"
 #include "gpio.h"
 #include "timer.h"
+#include "uart_1_wire_debug.h"
 
-/*============================== 可配置参数 ==================================*/
-
-#ifndef U1W_RETRY_MAX
-#define U1W_RETRY_MAX                       (10U)      /* 当前命令连续失败超过该次数后上报主流程 */
+#ifndef U1W_TX_PERIOD_10MS
+#define U1W_TX_PERIOD_10MS                 (10U)      /* 100ms 发一帧 */
 #endif
 
-#ifndef U1W_BUS_LOW_10MS_TH
-#define U1W_BUS_LOW_10MS_TH                 (30U / TASK_10MS)  /* 总线持续低电平 30ms 判异常 */
+#ifndef U1W_ANY_RX_TIMEOUT_10MS
+#define U1W_ANY_RX_TIMEOUT_10MS            (200U)     /* 2秒没有任意合法帧 */
 #endif
 
-#ifndef U1W_PROTO_TIMEOUT_MS
-#define U1W_PROTO_TIMEOUT_MS                (50U)      /* 4800bps + 10ms 空闲检测，不建议小于 50ms */
-#endif
-
-#ifndef U1W_POWER_ON_DELAY_10MS
-#define U1W_POWER_ON_DELAY_10MS             (50U / TASK_10MS)   /* 插包/重连后等待从机初始化 */
-#endif
-
-#ifndef U1W_U16_LSB_FIRST
-#define U1W_U16_LSB_FIRST                   (1U)       /* 1: 低字节先到；0: 高字节先到，按实测抓包确认 */
+#ifndef U1W_KEY_RX_TIMEOUT_10MS
+#define U1W_KEY_RX_TIMEOUT_10MS            (300U)     /* 3秒关键帧没有刷新 */
 #endif
 
 #ifndef U1W_FULL_DISPLAY_10MS
-#define U1W_FULL_DISPLAY_10MS               (180000UL / TASK_10MS) /* 满电后 B6 03 SOC 周期发送窗口：3 分钟 */
+#define U1W_FULL_DISPLAY_10MS              (18000U)   /* 满电显示3分钟 */
 #endif
 
-#define U1W_LIMIT_VOLTAGE(v)                (((v) == 0U) ? SET_vMAX : (((v) > SET_vMAX) ? SET_vMAX : (v)))
-#define U1W_LIMIT_CURRENT(i)                (((i) == 0U) ? iMAX     : (((i) > iMAX)     ? iMAX     : (i)))
+#define U1W_LIMIT_VOLTAGE(v)               (((v) == 0U) ? SET_vMAX : (((v) > SET_vMAX) ? SET_vMAX : (v)))
+#define U1W_LIMIT_CURRENT(i)               (((i) == 0U) ? iMAX     : (((i) > iMAX)     ? iMAX     : (i)))
 
-/*============================== 本地变量 ====================================*/
+typedef enum
+{
+    U1W_KEY_A0 = 0U,
+    U1W_KEY_A1,
+    U1W_KEY_A4,
+    U1W_KEY_A6,
+    U1W_KEY_A7,
+    U1W_KEY_B1,
+    U1W_KEY_B3,
+    U1W_KEY_B4,
+    U1W_KEY_MAX
+} U1W_KEY_Types;
 
-static u8 idata s_tx_buf[4];                /* 最长发送帧：CMD + DATA1 + DATA2 + CHK */
-static u8 xdata s_rx_buf[COM_FRAME_LEN];    /* 当前最长回复为 6 字节 */
+#define U1W_HANDSHAKE_MASK                 (0xFFU)
 
-static u8 idata s_wait_cmd;                 /* 当前等待的回复命令 */
-static u8 idata s_wait_len;                 /* 当前等待的回复长度 */
-static u8 idata s_rx_len;                   /* 本次实际收到的长度 */
-static u8 idata s_bus_low_count_10ms;        /* 总线低电平持续计数 */
-static u8 idata s_start_delay_10ms;          /* 上电/重连等待计数 */
-static u8 idata s_last_mos_data;            /* 最近一次已发送的 MOS 控制数据 */
+typedef struct
+{
+    u8  stage;                              /* UART_1WIRE_STAGE_Types */
+    u8  tx_index;                           /* 当前发送表下标 */
+    u8  tx_tick_10ms;                       /* 100ms 发送节拍 */
+    u8  rx_len;                             /* 接收缓存有效长度 */
+    u8  rx_fifo_last_cnt;                   /* 上一次看到的 FIFO 数据量，用于模拟接收空闲 */
+    u16 any_rx_age_10ms;                    /* 任意合法帧多久没收到 */
+    u16 full_display_10ms;                  /* 满电显示持续时间 */
+    u16 key_age_10ms[U1W_KEY_MAX];          /* 关键帧多久没收到 */
+} U1W_CTRL_Types;
 
-static bit s_wait_reply;                    /* 已发送命令，正在等回复 */
-static bit s_frame_ready;                   /* FIFO 空闲后已取出完整帧 */
-static bit s_charge_enable;                 /* 外部是否允许打开电池包充电 MOS */
-static bit s_need_mos_update;               /* 外部状态变化后，下一次 B6 优先同步 MOS */
+static U1W_CTRL_Types idata s_u1w;
+static u8 xdata s_rx_buf[COM_FRAME_LEN];
+static u8 idata s_tx_buf[4];
 
-static u16 idata s_wait_start_ms;            /* 等待回复起点，单位 ms */
-static u16 idata s_full_display_10ms;        /* 满电后显示电量倒计时，单位 10ms */
+static u8 code s_handshake_cmd[] =
+{
+    U1W_CMD_A0,
+    U1W_CMD_A1,
+    U1W_CMD_A4,
+    U1W_CMD_A6,
+    U1W_CMD_A7,
+    U1W_CMD_B1,
+    U1W_CMD_B3,
+    U1W_CMD_B4,
+};
+
+static u8 code s_charge_cmd[] =
+{
+    U1W_CMD_B1,
+    U1W_CMD_B3,
+    U1W_CMD_B4,
+    U1W_CMD_B6,
+};
+
+static u8 code s_temp_wait_cmd[] =
+{
+    U1W_CMD_B3,
+    U1W_CMD_B4,
+};
 
 UART_1WIRE_INFO_Types xdata uart_1_wire;
 
-/*============================== 基础工具 ====================================*/
+static void u1w_release_com(void)
+{
+    com_uart_set_rx_mode();
+}
 
-/**
-  * @brief  计算 CMD + DATA 的 8bit 累加和。
-  */
+static void u1w_pull_com_low(void)
+{
+    /*
+     * 主机主动结束通信：
+     * 1. 关闭 UART1 输入/输出复用；
+     * 2. P30 改为普通推挽输出；
+     * 3. 输出低电平，保持到拔电池或重新握手。
+     *
+     * 说明：协议中的“COM低电平超过30ms”是给BMS判断主机断开的，
+     * 主机侧不再把这个低电平当作异常检测。
+     */
+    __DisableIRQ(UART1_IRQn);
+    UART1_CON0 = 0U;
+    FIN_S8 = 0U;
+    FOUT_S30 = 0U;
+    COM_UART_OUTPUT();
+    COM_PIN = 0U;
+    __EnableIRQ(UART1_IRQn);
+}
+
+/*============================== 小工具函数 ==================================*/
+
 static u8 u1w_sum(u8 *buf, u8 len)
 {
     u8 i;
-    u8 sum = 0U;
+    u8 sum;
 
+    sum = 0U;
     for(i = 0U; i < len; i++)
     {
         sum = (u8)(sum + buf[i]);
@@ -90,41 +145,11 @@ static u8 u1w_sum(u8 *buf, u8 len)
     return sum;
 }
 
-/**
-  * @brief  判断 ms 延时是否到期，使用 time_after 处理 16bit tick 回绕。
-  */
-static bit u1w_ms_elapsed(u16 start_ms, u16 delay_ms)
-{
-    u16 now_ms;
-    u16 end_ms;
-
-    now_ms = timer_get_tick_ms();
-    end_ms = (u16)(start_ms + delay_ms);
-
-    if((now_ms == end_ms) || time_after(now_ms, end_ms))
-    {
-        return 1;
-    }
-
-    return 0;
-}
-
-/**
-  * @brief  从总线收到的两个字节还原 u16。
-  * @note   默认低字节先到；若抓包确认高字节先到，把 U1W_U16_LSB_FIRST 置 0。
-  */
 static u16 u1w_get_u16_bus(u8 byte0, u8 byte1)
 {
-#if (U1W_U16_LSB_FIRST != 0U)
     return (u16)((u16)byte0 | ((u16)byte1 << 8));
-#else
-    return (u16)(((u16)byte0 << 8) | (u16)byte1);
-#endif
 }
 
-/**
-  * @brief  协议 0.01V 转 mV，并做基本限幅。
-  */
 static u16 u1w_001v_to_mv(u16 raw_001v)
 {
     if(raw_001v > 6500U)
@@ -135,14 +160,10 @@ static u16 u1w_001v_to_mv(u16 raw_001v)
     return (u16)(raw_001v * 10U);
 }
 
-/**
-  * @brief  单电芯 0.1A 转整包 mA。
-  * @note   A6/A7 描述的是单电芯电流，整包允许电流需要乘并联数。
-  */
 static u16 u1w_cell_01a_to_pack_ma(u16 raw_cell_01a)
 {
-    u32 ma;
     u8 parallel;
+    u32 ma;
 
     parallel = uart_1_wire.cell_parallel;
     if((parallel == 0U) || (parallel > 16U))
@@ -159,47 +180,6 @@ static u16 u1w_cell_01a_to_pack_ma(u16 raw_cell_01a)
     return (u16)ma;
 }
 
-/**
-  * @brief  清除当前等待回复状态，不清已经解析出的电池包参数。
-  */
-static void u1w_clear_wait(void)
-{
-    s_wait_reply = 0;
-    s_frame_ready = 0;
-    s_wait_cmd = 0U;
-    s_wait_len = 0U;
-    s_rx_len = 0U;
-}
-
-/**
-  * @brief  记录一次通讯失败。
-  * @note   不推进 step；超过上限后只置位 retry_over，由主流程决定是否 reset_link。
-  */
-static void u1w_fail_once(u8 err)
-{
-    uart_1_wire.last_error = err;
-
-    if(uart_1_wire.retry_count < 0xFFU)
-    {
-        uart_1_wire.retry_count++;
-    }
-
-    if(uart_1_wire.retry_count > U1W_RETRY_MAX)
-    {
-        uart_1_wire.last_error = U1W_ERR_RETRY_OVER;
-        uart_1_wire.retry_over = 1U;
-        uart_1_wire.link_state = U1W_LINK_OFFLINE;
-        uart_1_wire.charge_status = U1W_B4_FAIL;
-        u1w_clear_wait();
-        com_fifo_clear();
-    }
-}
-
-/*============================== 发送与接收 ==================================*/
-
-/**
-  * @brief  根据命令字返回固定回复长度。
-  */
 static u8 u1w_reply_len(u8 cmd)
 {
     switch(cmd)
@@ -222,616 +202,25 @@ static u8 u1w_reply_len(u8 cmd)
     }
 }
 
-/**
-  * @brief  发送一条命令，并进入等待回复状态。
-  * @param  cmd: 命令字。
-  * @param  d1/d2: 两个数据字节。无数据命令时忽略。
-  * @param  data_len: 0 或 2。当前充电器协议命令只用到这两种长度。
-  */
-static bit u1w_send_cmd(u8 cmd, u8 d1, u8 d2, u8 data_len)
+static u8 u1w_key_index(u8 cmd)
 {
-    u8 tx_len;
-
-    s_wait_len = u1w_reply_len(cmd);
-    if(s_wait_len == 0U)
+    switch(cmd)
     {
-        uart_1_wire.last_error = U1W_ERR_NOT_READY;
-        return 0;
-    }
-
-    com_fifo_clear();
-
-    s_tx_buf[0] = cmd;
-    if(data_len == 0U)
-    {
-        s_tx_buf[1] = cmd;
-        tx_len = 2U;
-    }
-    else
-    {
-        s_tx_buf[1] = d1;
-        s_tx_buf[2] = d2;
-        s_tx_buf[3] = u1w_sum(s_tx_buf, 3U);
-        tx_len = 4U;
-    }
-
-    s_wait_cmd = cmd;
-    s_rx_len = 0U;
-    s_frame_ready = 0;
-    s_wait_reply = 1;
-    s_wait_start_ms = timer_get_tick_ms();
-
-    if(com_uart_send_buf(s_tx_buf, tx_len) != BSP_OK)
-    {
-        u1w_clear_wait();
-        u1w_fail_once(U1W_ERR_SEND);
-        return 0;
-    }
-
-    return 1;
-}
-
-/**
-  * @brief  按当前协议阶段发送一条主机命令。
-  */
-bit uart_1_wire_send_next(void)
-{
-    u8 mos_data;
-    u8 soc;
-
-    if(uart_1_wire_can_send() == 0)
-    {
-        uart_1_wire.last_error = U1W_ERR_NOT_READY;
-        return 0;
-    }
-
-    switch(uart_1_wire.step)
-    {
-    default:
-        uart_1_wire.step = U1W_STEP_A0;
-        /* fall through */
-
-    case U1W_STEP_A0:
-        return u1w_send_cmd(U1W_CMD_A0, 0x00U, U1W_MASTER, 2U);
-
-    case U1W_STEP_A1:
-        return u1w_send_cmd(U1W_CMD_A1, 0U, 0U, 0U);
-
-    case U1W_STEP_A4:
-        return u1w_send_cmd(U1W_CMD_A4, 0U, 0U, 0U);
-
-    case U1W_STEP_A6:
-        return u1w_send_cmd(U1W_CMD_A6, 0U, 0U, 0U);
-
-    case U1W_STEP_A7:
-        return u1w_send_cmd(U1W_CMD_A7, 0U, 0U, 0U);
-
-    case U1W_STEP_B1:
-        return u1w_send_cmd(U1W_CMD_B1, 0U, 0U, 0U);
-
-    case U1W_STEP_B3:
-        return u1w_send_cmd(U1W_CMD_B3, 0U, 0U, 0U);
-
-    case U1W_STEP_B4:
-        return u1w_send_cmd(U1W_CMD_B4, 0U, 0U, 0U);
-
-    case U1W_STEP_B6:
-        /*
-         * B6 发送策略：
-         * 1. MOS 状态变化、异常或满电刚停充时，优先发送 B6 01，同步电池包充电 MOS 状态。
-         * 2. 满电显示倒计时有效时，每次轮到 B6 都发送 B6 03 SOC，让电池包持续显示电量。
-         * 3. 满电显示窗口结束后，恢复发送 B6 01 MOS，继续维持当前充电 MOS 状态。
-         *
-         * 注意：满电显示不是只发一次，而是在 3 分钟窗口内随 B6 轮询周期重复发送。
-         */
-        mos_data = 0U;
-        if((s_charge_enable != 0) && (uart_1_wire_has_fault() == 0))
-        {
-            mos_data = U1W_MOS_CHG_ON;
-        }
-
-        if((s_need_mos_update != 0) || (mos_data != s_last_mos_data) || (s_full_display_10ms == 0U))
-        {
-            s_need_mos_update = 0;
-            s_last_mos_data = mos_data;
-            return u1w_send_cmd(U1W_CMD_B6, U1W_B6_TYPE_MOS, mos_data, 2U);
-        }
-
-        soc = uart_1_wire.soc_percent;
-        if(soc > 100U)
-        {
-            soc = 100U;
-        }
-        return u1w_send_cmd(U1W_CMD_B6, U1W_B6_TYPE_SOC, soc, 2U);
+    case U1W_CMD_A0: return U1W_KEY_A0;
+    case U1W_CMD_A1: return U1W_KEY_A1;
+    case U1W_CMD_A4: return U1W_KEY_A4;
+    case U1W_CMD_A6: return U1W_KEY_A6;
+    case U1W_CMD_A7: return U1W_KEY_A7;
+    case U1W_CMD_B1: return U1W_KEY_B1;
+    case U1W_CMD_B3: return U1W_KEY_B3;
+    case U1W_CMD_B4: return U1W_KEY_B4;
+    default:         return U1W_KEY_MAX;
     }
 }
 
-/**
-  * @brief  10ms 周期内检查 RX FIFO，模拟接收空闲后取出完整帧。
-  */
-static void u1w_rx_poll(void)
-{
-    u8 i;
-    u8 len;
-    static u8 len_bk = 0U;
-
-    if((s_wait_reply == 0) || (s_frame_ready != 0))
-    {
-        len_bk = 0U;
-        return;
-    }
-
-    len = s_com_fifo.cnt;
-    if(len == 0U)
-    {
-        len_bk = 0U;
-        return;
-    }
-
-    if(len != len_bk)
-    {
-        len_bk = len;
-        return;
-    }
-
-    if(len > COM_FRAME_LEN)
-    {
-        len = COM_FRAME_LEN;
-    }
-
-    s_rx_len = len;
-    for(i = 0U; i < s_rx_len; i++)
-    {
-        s_rx_buf[i] = com_fifo_pop();
-    }
-
-    com_fifo_clear();
-
-    len_bk = 0U;
-    s_wait_reply = 0;
-    s_frame_ready = 1;
-}
-
-/**
-  * @brief  检查当前回复帧长度、命令回显和 CHK。
-  */
-static bit u1w_check_frame(void)
-{
-    if((s_wait_len == 0U) || (s_rx_len != s_wait_len))
-    {
-        return 0;
-    }
-
-    if(s_rx_buf[0] != s_wait_cmd)
-    {
-        return 0;
-    }
-
-    if(u1w_sum(s_rx_buf, (u8)(s_wait_len - 1U)) != s_rx_buf[s_wait_len - 1U])
-    {
-        return 0;
-    }
-
-    return 1;
-}
-
-/*============================== 解析与状态推进 ===============================*/
-
-/**
-  * @brief  解析有效回复帧，并推进到下一阶段。
-  */
-static void u1w_parse_frame(void)
-{
-    u8 xy;
-    u32 pack_mv;
-
-    uart_1_wire.last_error = U1W_ERR_NONE;
-
-    switch(s_wait_cmd)
-    {
-    case U1W_CMD_A0:
-        /* A0 ZZ XY CHK：ZZ=识别码，X=串数编码，Y=并数编码。 */
-        uart_1_wire.pack_id = s_rx_buf[1];
-        xy = s_rx_buf[2];
-        uart_1_wire.cell_series = (u8)(((xy >> 4) & 0x0FU) + 5U);
-        uart_1_wire.cell_parallel = (u8)((xy & 0x0FU) + 1U);
-
-        if((uart_1_wire.cell_series < 5U) || (uart_1_wire.cell_series > 20U))
-        {
-            uart_1_wire.cell_series = BAT_SERIES;
-        }
-        if((uart_1_wire.cell_parallel == 0U) || (uart_1_wire.cell_parallel > 16U))
-        {
-            uart_1_wire.cell_parallel = 1U;
-        }
-
-        uart_1_wire.link_state = U1W_LINK_HANDSHAKE;
-        uart_1_wire.step = U1W_STEP_A1;
-        break;
-
-    case U1W_CMD_A1:
-        /* A1 XX YY CHK：YY=容量 0.1Ah。XX 电芯类型当前充电控制不用，不保存。 */
-        uart_1_wire.cell_cap_01ah = s_rx_buf[2];
-        uart_1_wire.step = U1W_STEP_A4;
-        break;
-
-    case U1W_CMD_A4:
-        /* A4 xxxx yyyy CHK：xxxx=单节预充截止，yyyy=单节满充，单位 0.01V。 */
-        uart_1_wire.cell_pre_mv = u1w_001v_to_mv(u1w_get_u16_bus(s_rx_buf[1], s_rx_buf[2]));
-
-        pack_mv = (u32)u1w_001v_to_mv(u1w_get_u16_bus(s_rx_buf[3], s_rx_buf[4])) *
-                  (u32)uart_1_wire.cell_series;
-        if(pack_mv > 0xFFFFUL)
-        {
-            pack_mv = 0xFFFFUL;
-        }
-        uart_1_wire.target_voltage_mv = U1W_LIMIT_VOLTAGE((u16)pack_mv);
-        uart_1_wire.step = U1W_STEP_A6;
-        break;
-
-    case U1W_CMD_A6:
-        /* A6 xxxx yyyy CHK：xxxx=单电芯最大充电电流 0.1A，整包需乘并联数。 */
-        uart_1_wire.max_charge_current_ma =
-            U1W_LIMIT_CURRENT(u1w_cell_01a_to_pack_ma(u1w_get_u16_bus(s_rx_buf[1], s_rx_buf[2])));
-        uart_1_wire.step = U1W_STEP_A7;
-        break;
-
-    case U1W_CMD_A7:
-        /* A7 XX YY 00 ZZ CHK：XX/YY=二级温区，ZZ=单电芯二级电流 0.1A。 */
-        uart_1_wire.derate_low_degc = (s8)s_rx_buf[1];
-        uart_1_wire.derate_high_degc = (s8)s_rx_buf[2];
-        uart_1_wire.derate_current_ma = U1W_LIMIT_CURRENT(u1w_cell_01a_to_pack_ma(s_rx_buf[4]));
-        uart_1_wire.link_state = U1W_LINK_ONLINE;
-        uart_1_wire.step = U1W_STEP_B1;
-        break;
-
-    case U1W_CMD_B1:
-        /* B1 xxxx yyyy CHK：xxxx=最低单节，yyyy=最高单节，单位 0.01V。 */
-        uart_1_wire.cell_min_mv = u1w_001v_to_mv(u1w_get_u16_bus(s_rx_buf[1], s_rx_buf[2]));
-        uart_1_wire.cell_max_mv = u1w_001v_to_mv(u1w_get_u16_bus(s_rx_buf[3], s_rx_buf[4]));
-        uart_1_wire.step = U1W_STEP_B3;
-        break;
-
-    case U1W_CMD_B3:
-        /* B3 XX YY CHK：XX=电池温度，YY=充电 MOS 温度；0xAA 表示无 MOS 温度。 */
-        uart_1_wire.batt_temp_degc = (s8)s_rx_buf[1];
-        uart_1_wire.mos_temp_degc = (s8)s_rx_buf[2];
-        uart_1_wire.step = U1W_STEP_B4;
-        break;
-
-    case U1W_CMD_B4:
-        /* B4 XX YY CHK：XX=SOC，YY=充电状态位。 */
-        uart_1_wire.soc_percent = s_rx_buf[1];
-        if(uart_1_wire.soc_percent > 100U)
-        {
-            uart_1_wire.soc_percent = 100U;
-        }
-        uart_1_wire.charge_status = s_rx_buf[2];
-        uart_1_wire.step = U1W_STEP_B6;
-        break;
-
-    case U1W_CMD_B6:
-        /* B6 YY XX CHK：从机回显控制类型和数据，当前只需要确认收到即可。 */
-        uart_1_wire.step = U1W_STEP_B1;
-        break;
-
-    default:
-        uart_1_wire.step = U1W_STEP_A0;
-        break;
-    }
-
-    uart_1_wire.retry_count = 0U;
-    uart_1_wire.retry_over = 0U;
-    uart_1_wire.offline_count_10ms = 0U;
-}
-
-/**
-  * @brief  检查总线是否持续低电平超过 30ms。
-  * @note   只上报错误并停止当前等待，不自动重连。
-  */
-static bit u1w_bus_low_check_10ms(void)
-{
-    if(com_uart_get_dir() != UART_1WIRE_DIR_RX)
-    {
-        s_bus_low_count_10ms = 0U;
-        return 0;
-    }
-
-    if(COM_PIN != 0)
-    {
-        s_bus_low_count_10ms = 0U;
-        return 0;
-    }
-
-    if(s_bus_low_count_10ms < 0xFFU)
-    {
-        s_bus_low_count_10ms++;
-    }
-
-    if(s_bus_low_count_10ms >= U1W_BUS_LOW_10MS_TH)
-    {
-        uart_1_wire.last_error = U1W_ERR_BUS_LOW;
-        uart_1_wire.retry_over = 1U;
-        uart_1_wire.link_state = U1W_LINK_OFFLINE;
-        uart_1_wire.charge_status = U1W_B4_FAIL;
-        u1w_clear_wait();
-        com_fifo_clear();
-        return 1;
-    }
-
-    return 0;
-}
-
-/**
-  * @brief  2s 通讯离线计数。
-  * @note   只上报离线，不自动回 A0；主流程决定是否 reset_link。
-  */
-static void u1w_offline_tick_10ms(void)
-{
-    if(uart_1_wire.offline_count_10ms < (COM_TIMEOUT_MS / TASK_10MS))
-    {
-        uart_1_wire.offline_count_10ms++;
-        return;
-    }
-
-    uart_1_wire.last_error = U1W_ERR_COMM_LOST;
-    uart_1_wire.retry_over = 1U;
-    uart_1_wire.link_state = U1W_LINK_OFFLINE;
-    uart_1_wire.charge_status = U1W_B4_FAIL;
-    u1w_clear_wait();
-}
-
-/*============================== 对外接口 ====================================*/
-
-/**
-  * @brief  初始化协议层。
-  */
-void uart_1_wire_init(void)
-{
-    memclr(&uart_1_wire, sizeof(uart_1_wire));
-    memclr(s_rx_buf, sizeof(s_rx_buf));
-    memclr(s_tx_buf, sizeof(s_tx_buf));
-
-    uart_1_wire.link_state = U1W_LINK_OFFLINE;
-    uart_1_wire.step = U1W_STEP_A0;
-    uart_1_wire.last_error = U1W_ERR_NONE;
-    uart_1_wire.retry_count = 0U;
-    uart_1_wire.retry_over = 0U;
-    uart_1_wire.cell_series = BAT_SERIES;
-    uart_1_wire.cell_parallel = 1U;
-    uart_1_wire.cell_pre_mv = CELL_PRE_MV;
-    uart_1_wire.charge_status = U1W_B4_FAIL;
-    uart_1_wire.target_voltage_mv = SET_vMAX;
-    uart_1_wire.max_charge_current_ma = iMAX;
-    uart_1_wire.derate_current_ma = iMAX;
-    uart_1_wire.derate_low_degc = 10;
-    uart_1_wire.derate_high_degc = 40;
-
-    s_bus_low_count_10ms = 0U;
-    s_start_delay_10ms = U1W_POWER_ON_DELAY_10MS;
-    s_full_display_10ms = 0U;
-    s_last_mos_data = 0xFFU;
-
-    s_wait_reply = 0;
-    s_frame_ready = 0;
-    s_charge_enable = 1;
-    s_need_mos_update = 1;
-
-    u1w_clear_wait();
-    com_fifo_clear();
-    com_uart_set_rx_mode();
-}
-
-/**
-  * @brief  P30 单线通信 10ms 轮询任务。
-  * @note   本函数只负责接收、超时、错误计时；不自动发送下一条命令。
-  */
-void uart_1_wire_poll_10ms(void)
-{
-    if(s_full_display_10ms != 0U)
-    {
-        s_full_display_10ms--;
-    }
-
-    if(s_start_delay_10ms != 0U)
-    {
-        s_start_delay_10ms--;
-    }
-
-    u1w_rx_poll();
-
-    if(u1w_bus_low_check_10ms() != 0)
-    {
-        u1w_offline_tick_10ms();
-        return;
-    }
-
-    if(s_frame_ready != 0)
-    {
-        if(u1w_check_frame() != 0)
-        {
-            u1w_parse_frame();
-        }
-        else
-        {
-            u1w_fail_once(U1W_ERR_FRAME);
-        }
-
-        s_frame_ready = 0;
-        s_rx_len = 0U;
-        u1w_offline_tick_10ms();
-        return;
-    }
-
-    if(s_wait_reply != 0)
-    {
-        if(u1w_ms_elapsed(s_wait_start_ms, U1W_PROTO_TIMEOUT_MS) != 0)
-        {
-            u1w_clear_wait();
-            com_fifo_clear();
-            u1w_fail_once(U1W_ERR_TIMEOUT);
-        }
-
-        u1w_offline_tick_10ms();
-        return;
-    }
-
-    u1w_offline_tick_10ms();
-}
-
-/**
-  * @brief  兼容旧接口。
-  * @note   当前版本发送间隔由主流程控制，因此本函数只等同于 uart_1_wire_poll_10ms()。
-  */
-void uart_1_wire_task_10ms(void)
-{
-    uart_1_wire_poll_10ms();
-}
-
-/**
-  * @brief  查询当前是否允许主流程发送下一条协议命令。
-  */
-bit uart_1_wire_can_send(void)
-{
-    if(s_wait_reply != 0)
-    {
-        return 0;
-    }
-
-    if(s_frame_ready != 0)
-    {
-        return 0;
-    }
-
-    if(s_start_delay_10ms != 0U)
-    {
-        return 0;
-    }
-
-    if(uart_1_wire.retry_over != 0U)
-    {
-        return 0;
-    }
-
-    return 1;
-}
-
-/**
-  * @brief  查询协议层是否正忙。
-  */
-bit uart_1_wire_is_busy(void)
-{
-    if((s_wait_reply != 0) || (s_frame_ready != 0))
-    {
-        return 1;
-    }
-
-    return 0;
-}
-
-/**
-  * @brief  查询是否已经连续失败超过上限，需要主流程处理。
-  */
-bit uart_1_wire_is_retry_over(void)
-{
-    if(uart_1_wire.retry_over != 0U)
-    {
-        return 1;
-    }
-
-    return 0;
-}
-
-/**
-  * @brief  获取最后一次协议错误码。
-  */
-u8 uart_1_wire_get_last_error(void)
-{
-    return uart_1_wire.last_error;
-}
-
-/**
-  * @brief  清除普通错误码。
-  * @note   不清 retry_over；retry_over 必须由主流程调用 reset_link 后清除。
-  */
-void uart_1_wire_clear_error(void)
-{
-    if(uart_1_wire.retry_over == 0U)
-    {
-        uart_1_wire.last_error = U1W_ERR_NONE;
-    }
-}
-
-/**
-  * @brief  查询单线通信是否在线。
-  */
-bit uart_1_wire_is_online(void)
-{
-    if(uart_1_wire.link_state == U1W_LINK_ONLINE)
-    {
-        return 1;
-    }
-
-    return 0;
-}
-
-/**
-  * @brief  查询 B4 是否存在停充类异常。
-  */
-bit uart_1_wire_has_fault(void)
-{
-    if((uart_1_wire.charge_status & U1W_B4_FAULT_MASK) != 0U)
-    {
-        return 1;
-    }
-
-    return 0;
-}
-
-/**
-  * @brief  查询电池包是否允许进入正常充电。
-  */
-bit uart_1_wire_is_ready(void)
-{
-    if(uart_1_wire_is_online() == 0)
-    {
-        return 0;
-    }
-
-    if(uart_1_wire_has_fault() != 0)
-    {
-        return 0;
-    }
-
-    if(s_charge_enable == 0)
-    {
-        return 0;
-    }
-
-    return 1;
-}
-
-/**
-  * @brief  获取协议层目标充电电压，单位 mV。
-  */
-u16 uart_1_wire_get_target_voltage_mv(void)
-{
-    return U1W_LIMIT_VOLTAGE(uart_1_wire.target_voltage_mv);
-}
-
-/**
-  * @brief  获取协议层目标充电电流，单位 mA。
-  */
-u16 uart_1_wire_get_target_current_ma(void)
+static void u1w_refresh_target_current(void)
 {
     u16 target_ma;
-
-    if((uart_1_wire_is_online() == 0) ||
-       (uart_1_wire_has_fault() != 0) ||
-       (s_charge_enable == 0))
-    {
-        return 0U;
-    }
 
     target_ma = U1W_LIMIT_CURRENT(uart_1_wire.max_charge_current_ma);
 
@@ -848,60 +237,659 @@ u16 uart_1_wire_get_target_current_ma(void)
         target_ma = 100U;
     }
 
-    return target_ma;
+    uart_1_wire.target_current_ma = target_ma;
+}
+
+/*============================== 接收：扫描合法帧 ==============================*/
+
+static void u1w_parse_frame(u8 *frame)
+{
+    u8 cmd;
+    u8 xy;
+    u8 key;
+    u32 pack_mv;
+
+    cmd = frame[0];
+    uart_1_wire.last_error = U1W_ERR_NONE;
+    uart_1_wire.offline_count_10ms = 0U;
+    s_u1w.any_rx_age_10ms = 0U;
+
+    key = u1w_key_index(cmd);
+    if(key < U1W_KEY_MAX)
+    {
+        s_u1w.key_age_10ms[key] = 0U;
+        uart_1_wire.handshake_mask |= (u8)(1U << key);
+    }
+
+    switch(cmd)
+    {
+    case U1W_CMD_A0:
+        /* A0 ZZ XY CHK：ZZ=识别码，X=串数编码，Y=并数编码。 */
+        uart_1_wire.pack_id = frame[1];
+        xy = frame[2];
+        uart_1_wire.cell_series = (u8)(((xy >> 4) & 0x0FU) + 5U);
+        uart_1_wire.cell_parallel = (u8)((xy & 0x0FU) + 1U);
+
+        if((uart_1_wire.cell_series < 5U) || (uart_1_wire.cell_series > 20U))
+        {
+            uart_1_wire.cell_series = BAT_SERIES;
+        }
+        if((uart_1_wire.cell_parallel == 0U) || (uart_1_wire.cell_parallel > 16U))
+        {
+            uart_1_wire.cell_parallel = 1U;
+        }
+        break;
+
+    case U1W_CMD_A1:
+        /* A1 XX YY CHK：YY=容量 0.1Ah。 */
+        uart_1_wire.cell_cap_01ah = frame[2];
+        break;
+
+    case U1W_CMD_A4:
+        /* A4 xxxx yyyy CHK：xxxx=预充截止，yyyy=满充，单位0.01V。 */
+        uart_1_wire.cell_pre_mv = u1w_001v_to_mv(u1w_get_u16_bus(frame[1], frame[2]));
+        pack_mv = (u32)u1w_001v_to_mv(u1w_get_u16_bus(frame[3], frame[4])) *
+                  (u32)uart_1_wire.cell_series;
+        if(pack_mv > 0xFFFFUL)
+        {
+            pack_mv = 0xFFFFUL;
+        }
+        uart_1_wire.target_voltage_mv = U1W_LIMIT_VOLTAGE((u16)pack_mv);
+        break;
+
+    case U1W_CMD_A6:
+        /* A6 xxxx yyyy CHK：xxxx=单电芯最大充电电流0.1A。 */
+        uart_1_wire.max_charge_current_ma =
+            U1W_LIMIT_CURRENT(u1w_cell_01a_to_pack_ma(u1w_get_u16_bus(frame[1], frame[2])));
+        u1w_refresh_target_current();
+        break;
+
+    case U1W_CMD_A7:
+        /* A7 XX YY 00 ZZ CHK：XX/YY=二级温区，ZZ=单电芯二级电流0.1A。 */
+        uart_1_wire.derate_low_degc = (s8)frame[1];
+        uart_1_wire.derate_high_degc = (s8)frame[2];
+        uart_1_wire.derate_current_ma = U1W_LIMIT_CURRENT(u1w_cell_01a_to_pack_ma(frame[4]));
+        u1w_refresh_target_current();
+        break;
+
+    case U1W_CMD_B1:
+        /* B1 xxxx yyyy CHK：xxxx=最低单节，yyyy=最高单节，单位0.01V。 */
+        uart_1_wire.cell_min_mv = u1w_001v_to_mv(u1w_get_u16_bus(frame[1], frame[2]));
+        uart_1_wire.cell_max_mv = u1w_001v_to_mv(u1w_get_u16_bus(frame[3], frame[4]));
+        break;
+
+    case U1W_CMD_B3:
+        /* B3 XX YY CHK：XX=电池温度，YY=充电 MOS 温度。 */
+        uart_1_wire.batt_temp_degc = (s8)frame[1];
+        uart_1_wire.mos_temp_degc = (s8)frame[2];
+        u1w_refresh_target_current();
+        break;
+
+    case U1W_CMD_B4:
+        /* B4 XX YY CHK：XX=SOC，YY=状态位。状态位只记录，不直接控制B6。 */
+        uart_1_wire.soc_percent = frame[1];
+        if(uart_1_wire.soc_percent > 100U)
+        {
+            uart_1_wire.soc_percent = 100U;
+        }
+        uart_1_wire.charge_status = frame[2];
+        break;
+
+    case U1W_CMD_B6:
+        /* B6 回显，收到合法帧即可。 */
+        break;
+
+    default:
+        break;
+    }
+
+    if((uart_1_wire.handshake_mask & U1W_HANDSHAKE_MASK) == U1W_HANDSHAKE_MASK)
+    {
+        uart_1_wire.link_state = U1W_LINK_ONLINE;
+    }
+    else if(s_u1w.stage == U1W_STAGE_HANDSHAKE)
+    {
+        uart_1_wire.link_state = U1W_LINK_HANDSHAKE;
+    }
+
+    u1w_dbg_parse_ok(cmd);
 }
 
 /**
-  * @brief  设置是否允许 B6 打开电池包充电 MOS。
-  * @note   充电主流程进入异常、满电、待机时传 0；允许充电时传 1。
+  * @brief  从接收缓存头部删除指定字节数。
+  * @note   用于丢弃已解析的完整帧，或跳过帧前面的无效数据。
   */
-void uart_1_wire_set_charge_enable(bit enable)
+static void u1w_remove_rx_bytes(u8 count)
 {
-    if(s_charge_enable != enable)
+    u8 i;
+
+    /* 删除数量超过当前缓存长度，直接清空缓存。 */
+    if(count >= s_u1w.rx_len)
     {
-        s_charge_enable = enable;
-        s_need_mos_update = 1;
+        s_u1w.rx_len = 0U;
+        return;
+    }
+
+    /* 将剩余数据前移，保留后面还没处理的数据。 */
+    for(i = 0U; i < (u8)(s_u1w.rx_len - count); i++)
+    {
+        s_rx_buf[i] = s_rx_buf[(u8)(i + count)];
+    }
+
+    /* 更新缓存有效长度。 */
+    s_u1w.rx_len = (u8)(s_u1w.rx_len - count);
+}
+
+/**
+  * @brief  一线通信接收任务。
+  * @note   先用 FIFO 长度不再变化来模拟接收空闲，再从缓存中扫描合法帧。
+  */
+static void u1w_rx_task(void)
+{
+    u8 i;
+    u8 len;
+    u8 cmd;
+    u8 chk;
+    u8 fifo_cnt;
+
+    /*
+     * 模拟接收空闲判断：
+     * FIFO 有数据，但本次长度和上次不同，说明可能还在继续接收，先不解析。
+     * 连续两次 FIFO 长度相同，才认为这一批数据已收完。
+     */
+    fifo_cnt = s_com_fifo.cnt;
+    if(fifo_cnt != 0U)
+    {
+        if(fifo_cnt != s_u1w.rx_fifo_last_cnt)
+        {
+            s_u1w.rx_fifo_last_cnt = fifo_cnt;
+            return;
+        }
+    }
+    s_u1w.rx_fifo_last_cnt = fifo_cnt;
+
+    /* FIFO 长度稳定后，再把数据搬到协议接收缓存。 */
+    while(s_com_fifo.cnt != 0U)
+    {
+        if(s_u1w.rx_len >= COM_FRAME_LEN)
+        {
+            u1w_remove_rx_bytes(1U);
+        }
+
+        s_rx_buf[s_u1w.rx_len] = com_fifo_pop();
+        s_u1w.rx_len++;
+    }
+
+    /* FIFO 已搬空，清上次 FIFO 长度记录。 */
+    s_u1w.rx_fifo_last_cnt = 0U;
+
+    /*
+     * 从接收缓存中扫描帧头 CMD：
+     * 校验成功就解析；
+     * 校验失败就从下一字节继续找。
+     */
+    i = 0U;
+    while(i < s_u1w.rx_len)
+    {
+        cmd = s_rx_buf[i];
+        len = u1w_reply_len(cmd);
+
+        /* 不是已知 CMD，跳过当前字节。 */
+        if(len == 0U)
+        {
+            i++;
+            continue;
+        }
+
+        /*
+         * 找到可能帧头，但剩余长度不够。
+         * 保留这个帧头及后续数据，等待下次接收。
+         */
+        if((u8)(s_u1w.rx_len - i) < len)
+        {
+            if(i != 0U)
+            {
+                u1w_remove_rx_bytes(i);
+            }
+            return;
+        }
+
+        /* 长度足够，计算校验。 */
+        chk = u1w_sum(&s_rx_buf[i], (u8)(len - 1U));
+        if(chk == s_rx_buf[(u8)(i + len - 1U)])
+        {
+            /* 合法帧：解析后删除本帧及前面的无效数据。 */
+            u1w_dbg_rx_ok(&s_rx_buf[i], len);
+            u1w_parse_frame(&s_rx_buf[i]);
+            u1w_remove_rx_bytes((u8)(i + len));
+            i = 0U;
+            continue;
+        }
+
+        /* 当前 CMD 像帧头但校验不对，从下一字节继续找。 */
+        uart_1_wire.last_error = U1W_ERR_FRAME;
+        u1w_dbg_rx_bad(U1W_DBG_BAD_CHK, cmd, len, len, &s_rx_buf[i], chk);
+        i++;
+    }
+
+    /* 扫描结束后，丢弃已经确认无用的数据。 */
+    if(i != 0U)
+    {
+        u1w_remove_rx_bytes(i);
     }
 }
 
+/*============================== 发送：按阶段轮询 ==============================*/
+
 /**
-  * @brief  启动满电后 3 分钟电量显示窗口。
-  * @note   本函数只打开显示窗口；真正的 B6 03 SOC 会在后续 B6 轮询中周期性重复发送。
-  *         是否停充、是否回待机由充电主流程决定。
+  * @brief  组装并发送一帧一线通信命令。
+  * @param  cmd 要发送的命令码。
+  * @retval 1：发送成功；0：发送失败。
   */
-void uart_1_wire_start_full_display(void)
+static bit u1w_send_frame(u8 cmd)
 {
-    s_full_display_10ms = (u16)U1W_FULL_DISPLAY_10MS;
+    u8 tx_len;
+
+    /* 所有帧第 1 字节都是命令码。 */
+    s_tx_buf[0] = cmd;
+
+    if(cmd == U1W_CMD_A0)
+    {
+        /* A0 帧格式特殊：A0 00 主机地址 CHK。 */
+        s_tx_buf[1] = 0x00U;
+        s_tx_buf[2] = U1W_MASTER;
+        s_tx_buf[3] = u1w_sum(s_tx_buf, 3U);
+        tx_len = 4U;
+    }
+    else if(cmd == U1W_CMD_B6)
+    {
+        /*
+         * B6 是主机控制/显示命令：
+         * 满电显示阶段发送 SOC；
+         * 其他充电阶段固定要求打开充电 MOS。
+         */
+        if(s_u1w.stage == U1W_STAGE_FULL_DISPLAY)
+        {
+            s_tx_buf[1] = U1W_B6_TYPE_SOC;
+            s_tx_buf[2] = uart_1_wire.soc_percent;
+        }
+        else
+        {
+            s_tx_buf[1] = U1W_B6_TYPE_MOS;
+            s_tx_buf[2] = U1W_MOS_CHG_ON;  
+        }
+
+        s_tx_buf[3] = u1w_sum(s_tx_buf, 3U);
+        tx_len = 4U;
+    }
+    else
+    {
+        /*
+         * 其他查询命令为 2 字节：
+         * 第 1 字节：命令码；
+         * 第 2 字节：校验和。这里 cmd + cmd = 0，所以校验字节等于 cmd。
+         */
+        s_tx_buf[1] = cmd;
+        s_tx_buf[2] = 0U;
+        s_tx_buf[3] = 0U;
+        tx_len = 2U;
+    }
+
+    /* 发送失败时记录错误，交给主流程后续处理。 */
+    if(com_uart_send_buf(s_tx_buf, tx_len) != BSP_OK)
+    {
+        uart_1_wire.last_error = U1W_ERR_SEND;
+        return 0;
+    }
+
+    /* 调试打印：发送内容和期望回复长度。 */
+    u1w_dbg_tx(s_tx_buf, tx_len, u1w_reply_len(cmd));
+    return 1;
 }
 
 /**
-  * @brief  停止满电电量显示。
+  * @brief  一线通信发送任务。
+  * @note   每 100ms 按当前通信阶段发送一帧，不等待回复。
   */
-void uart_1_wire_stop_full_display(void)
+static void u1w_tx_task(void)
 {
-    s_full_display_10ms = 0U;
+    u8 cmd;
+    u8 list_len;
+
+    /*
+     * 停止阶段、主动拉低 COM 阶段、通信已超时：
+     * 不再发送协议帧，并把发送节拍保持为“已到时间”。
+     */
+    if((s_u1w.stage == U1W_STAGE_STOP) ||
+       (s_u1w.stage == U1W_STAGE_PULL_LOW) ||
+       (uart_1_wire.comm_timeout != 0U))
+    {
+        s_u1w.tx_tick_10ms = U1W_TX_PERIOD_10MS;
+        return;
+    }
+
+    /* 100ms 发送节拍未到，继续计时。 */
+    if(s_u1w.tx_tick_10ms < U1W_TX_PERIOD_10MS)
+    {
+        s_u1w.tx_tick_10ms++;
+        return;
+    }
+
+    /* 节拍到，准备发送本阶段下一帧。 */
+    s_u1w.tx_tick_10ms = 0U;
+
+    if(s_u1w.stage == U1W_STAGE_HANDSHAKE)
+    {
+        /* 握手阶段：循环发送 A0/A1/A4/A6/A7/B1/B3/B4。 */
+        list_len = (u8)ARRAY_SIZE(s_handshake_cmd);
+        if(s_u1w.tx_index >= list_len)
+        {
+            s_u1w.tx_index = 0U;
+        }
+
+        cmd = s_handshake_cmd[s_u1w.tx_index];
+        s_u1w.tx_index++;
+    }
+    else if(s_u1w.stage == U1W_STAGE_TEMP_WAIT)
+    {
+        /* 温度异常等待阶段：只轮询温度/状态相关帧。 */
+        list_len = (u8)ARRAY_SIZE(s_temp_wait_cmd);
+        if(s_u1w.tx_index >= list_len)
+        {
+            s_u1w.tx_index = 0U;
+        }
+
+        cmd = s_temp_wait_cmd[s_u1w.tx_index];
+        s_u1w.tx_index++;
+    }
+    else if(s_u1w.stage == U1W_STAGE_FULL_DISPLAY)
+    {
+        /*
+         * 满电显示阶段：周期发送 B6 显示 SOC。
+         * 到达 3 分钟后，主动拉低 COM，通知 BMS 主机结束通信。
+         */
+        if(s_u1w.full_display_10ms >= U1W_FULL_DISPLAY_10MS)
+        {
+            u1w_pull_com_low();
+            return;
+        }
+
+        cmd = U1W_CMD_B6;
+    }
+    else
+    {
+        /* 正常充电阶段：循环发送 B1/B3/B4/B6。 */
+        list_len = (u8)ARRAY_SIZE(s_charge_cmd);
+        if(s_u1w.tx_index >= list_len)
+        {
+            s_u1w.tx_index = 0U;
+        }
+
+        cmd = s_charge_cmd[s_u1w.tx_index];
+        s_u1w.tx_index++;
+    }
+
+    /* 发送选中的命令帧，发送失败由 u1w_send_frame() 记录错误。 */
+    (void)u1w_send_frame(cmd);
 }
 
+/*============================== 超时计数 =====================================*/
+
 /**
-  * @brief  外部请求重新握手。
-  * @note   本函数不做 BT+ 拔包判断，只提供给主流程在需要时调用。
+  * @brief  一线通信计时任务，10ms 调用一次。
+  * @note   负责统计总通信超时、关键帧超时，以及满电显示 3 分钟计时。
   */
-void uart_1_wire_reset_link(void)
+static void u1w_age_task_10ms(void)
 {
-    u1w_clear_wait();
-    com_fifo_clear();
-    com_uart_set_rx_mode();
+    u8 i;
+    u8 start_key;
+    u8 end_key;
+
+    /* 停止通信或主动拉低 COM 时，不再统计通信超时。 */
+    if((s_u1w.stage == U1W_STAGE_STOP) || (s_u1w.stage == U1W_STAGE_PULL_LOW))
+    {
+        return;
+    }
+
+    /*
+     * 满电显示阶段只统计显示时间。
+     * 到 3 分钟后的拉低 COM 动作，由发送任务处理。
+     */
+    if(s_u1w.stage == U1W_STAGE_FULL_DISPLAY)
+    {
+        if(s_u1w.full_display_10ms < U1W_FULL_DISPLAY_10MS)
+        {
+            s_u1w.full_display_10ms++;
+        }
+        return;
+    }
+
+    /* 任意合法帧超时计数：收到任意合法帧会在接收解析处清零。 */
+    if(s_u1w.any_rx_age_10ms < U1W_ANY_RX_TIMEOUT_10MS)
+    {
+        s_u1w.any_rx_age_10ms++;
+    }
+    uart_1_wire.offline_count_10ms = s_u1w.any_rx_age_10ms;
+
+    /*
+     * 根据当前阶段，选择需要监控的关键帧范围：
+     * 握手阶段：A0/A1/A4/A6/A7/B1/B3/B4 都要刷新；
+     * 温度等待：只看 B3/B4；
+     * 充电阶段：只看 B1/B3/B4。
+     */
+    if(s_u1w.stage == U1W_STAGE_HANDSHAKE)
+    {
+        start_key = U1W_KEY_A0;
+        end_key = U1W_KEY_MAX;
+    }
+    else if(s_u1w.stage == U1W_STAGE_TEMP_WAIT)
+    {
+        start_key = U1W_KEY_B3;
+        end_key = U1W_KEY_B4 + 1U;
+    }
+    else
+    {
+        start_key = U1W_KEY_B1;
+        end_key = U1W_KEY_B4 + 1U;
+    }
+
+    /* 当前阶段需要的关键帧计时。 */
+    for(i = start_key; i < end_key; i++)
+    {
+        if(s_u1w.key_age_10ms[i] < U1W_KEY_RX_TIMEOUT_10MS)
+        {
+            s_u1w.key_age_10ms[i]++;
+        }
+    }
+
+    /* 2 秒内没有收到任何合法帧，判定通信丢失。 */
+    if(s_u1w.any_rx_age_10ms >= U1W_ANY_RX_TIMEOUT_10MS)
+    {
+        uart_1_wire.comm_timeout = 1U;
+        uart_1_wire.retry_over = 1U;
+        uart_1_wire.last_error = U1W_ERR_COMM_LOST;
+        uart_1_wire.key_timeout_cmd = 0U;
+        uart_1_wire.link_state = U1W_LINK_OFFLINE;
+        return;
+    }
+
+    /* 关键帧超过 3 秒未刷新，也判定通信异常，并记录是哪一帧超时。 */
+    for(i = start_key; i < end_key; i++)
+    {
+        if(s_u1w.key_age_10ms[i] >= U1W_KEY_RX_TIMEOUT_10MS)
+        {
+            uart_1_wire.comm_timeout = 1U;
+            uart_1_wire.retry_over = 1U;
+            uart_1_wire.last_error = U1W_ERR_COMM_LOST;
+            uart_1_wire.link_state = U1W_LINK_OFFLINE;
+
+            switch(i)
+            {
+            case U1W_KEY_A0: uart_1_wire.key_timeout_cmd = U1W_CMD_A0; break;
+            case U1W_KEY_A1: uart_1_wire.key_timeout_cmd = U1W_CMD_A1; break;
+            case U1W_KEY_A4: uart_1_wire.key_timeout_cmd = U1W_CMD_A4; break;
+            case U1W_KEY_A6: uart_1_wire.key_timeout_cmd = U1W_CMD_A6; break;
+            case U1W_KEY_A7: uart_1_wire.key_timeout_cmd = U1W_CMD_A7; break;
+            case U1W_KEY_B1: uart_1_wire.key_timeout_cmd = U1W_CMD_B1; break;
+            case U1W_KEY_B3: uart_1_wire.key_timeout_cmd = U1W_CMD_B3; break;
+            case U1W_KEY_B4: uart_1_wire.key_timeout_cmd = U1W_CMD_B4; break;
+            default:         uart_1_wire.key_timeout_cmd = 0U; break;
+            }
+            return;
+        }
+    }
+}
+
+/*============================== 对外接口 =====================================*/
+
+void uart_1_wire_init(void)
+{
+    memclr(&uart_1_wire, sizeof(uart_1_wire));
+    memclr(&s_u1w, sizeof(s_u1w));
+    memclr(s_rx_buf, sizeof(s_rx_buf));
+    memclr(s_tx_buf, sizeof(s_tx_buf));
 
     uart_1_wire.link_state = U1W_LINK_OFFLINE;
-    uart_1_wire.step = U1W_STEP_A0;
     uart_1_wire.last_error = U1W_ERR_NONE;
-    uart_1_wire.retry_count = 0U;
-    uart_1_wire.retry_over = 0U;
-    uart_1_wire.charge_status = U1W_B4_FAIL;
-    uart_1_wire.offline_count_10ms = 0U;
+    uart_1_wire.cell_series = BAT_SERIES;
+    uart_1_wire.cell_parallel = 1U;
+    uart_1_wire.cell_pre_mv = CELL_PRE_MV;
+    uart_1_wire.target_voltage_mv = SET_vMAX;
+    uart_1_wire.max_charge_current_ma = iMAX;
+    uart_1_wire.derate_current_ma = iMAX;
+    uart_1_wire.target_current_ma = iMAX;
+    uart_1_wire.derate_low_degc = 10;
+    uart_1_wire.derate_high_degc = 40;
 
-    s_bus_low_count_10ms = 0U;
-    s_start_delay_10ms = U1W_POWER_ON_DELAY_10MS;
-    s_last_mos_data = 0xFFU;
-    s_need_mos_update = 1;
+    s_u1w.stage = U1W_STAGE_STOP;
+    s_u1w.tx_tick_10ms = U1W_TX_PERIOD_10MS;
+
+    com_fifo_clear();
+    u1w_release_com();
+}
+
+void uart_1_wire_reset_link(void)
+{
+    uart_1_wire_init();
+}
+
+/**
+  * @brief  设置一线通信阶段。
+  * @note   切换阶段时，会重置发送节拍、接收缓存、超时计数和关键帧计时。
+  */
+void uart_1_wire_set_stage(u8 stage)
+{
+    u8 i;
+
+    /* 非法阶段统一转为停止通信，避免状态越界。 */
+    if(stage > U1W_STAGE_PULL_LOW)
+    {
+        stage = U1W_STAGE_STOP;
+    }
+
+    /* 阶段未变化，不重复清计数，避免影响当前通信。 */
+    if(s_u1w.stage == stage)
+    {
+        return;
+    }
+
+    /* 切换通信阶段后，重新从本阶段第一帧开始发送。 */
+    s_u1w.stage = stage;
+    s_u1w.tx_index = 0U;
+    s_u1w.tx_tick_10ms = U1W_TX_PERIOD_10MS;
+    s_u1w.rx_len = 0U;
+
+    /* 清通信超时相关计数和标志。 */
+    s_u1w.any_rx_age_10ms = 0U;
+    s_u1w.full_display_10ms = 0U;
+    uart_1_wire.offline_count_10ms = 0U;
+    uart_1_wire.comm_timeout = 0U;
+    uart_1_wire.retry_over = 0U;
+    uart_1_wire.key_timeout_cmd = 0U;
+
+    /* 清各关键帧刷新计时。 */
+    for(i = 0U; i < U1W_KEY_MAX; i++)
+    {
+        s_u1w.key_age_10ms[i] = 0U;
+    }
+
+    if(stage == U1W_STAGE_HANDSHAKE)
+    {
+        /* 重新握手时，必须重新收齐 A0/A1/A4/A6/A7/B1/B3/B4。 */
+        uart_1_wire.handshake_mask = 0U;
+        uart_1_wire.link_state = U1W_LINK_HANDSHAKE;
+        u1w_release_com();
+    }
+    else if(stage == U1W_STAGE_STOP)
+    {
+        /* 停止通信：释放 COM，不主动拉低。 */
+        uart_1_wire.link_state = U1W_LINK_OFFLINE;
+        u1w_release_com();
+    }
+    else if(stage == U1W_STAGE_PULL_LOW)
+    {
+        /* 主动拉低 COM，通知 BMS 主机结束通信。 */
+        uart_1_wire.link_state = U1W_LINK_OFFLINE;
+        u1w_pull_com_low();
+    }
+    else
+    {
+        /* 其他通信阶段需要释放 COM，让总线正常收发。 */
+        u1w_release_com();
+    }
+
+    /* 阶段切换后，丢弃旧缓存，避免上一阶段残留数据影响新阶段。 */
+    com_fifo_clear();
+}
+
+/**
+  * @brief  一线通信 10ms 周期任务。
+  * @note   主流程每 10ms 调用一次，内部完成接收、超时计时和周期发送。
+  */
+void uart_1_wire_poll_10ms(void)
+{
+    /*
+     * 主动拉低 COM 阶段：
+     * 持续保持 COM 低电平，不再收发协议帧。
+     */
+    if(s_u1w.stage == U1W_STAGE_PULL_LOW)
+    {
+        u1w_pull_com_low();
+        return;
+    }
+
+    /* 先处理接收，合法帧会清通信计时并更新协议数据。 */
+    u1w_rx_task();
+
+    /* 再处理超时计时，判断总通信或关键帧是否超时。 */
+    u1w_age_task_10ms();
+
+    /* 最后按当前阶段和 100ms 节拍发送下一帧。 */
+    u1w_tx_task();
+}
+
+void uart_1_wire_task_10ms(void)
+{
+    uart_1_wire_poll_10ms();
+}
+
+void uart_1_wire_get_info(UART_1WIRE_CHARGE_INFO_Types *info)
+{
+    if(info == 0)
+    {
+        return;
+    }
+
+    info->stage = s_u1w.stage;
+    info->handshake_ok = ((uart_1_wire.handshake_mask & U1W_HANDSHAKE_MASK) == U1W_HANDSHAKE_MASK) ? 1U : 0U;
+    info->comm_timeout = uart_1_wire.comm_timeout;
+    info->key_timeout_cmd = uart_1_wire.key_timeout_cmd;
+    info->soc_percent = uart_1_wire.soc_percent;
+    info->charge_status = uart_1_wire.charge_status;
+    info->batt_temp_degc = uart_1_wire.batt_temp_degc;
+    info->mos_temp_degc = uart_1_wire.mos_temp_degc;
+    info->target_voltage_mv = U1W_LIMIT_VOLTAGE(uart_1_wire.target_voltage_mv);
+    info->target_current_ma = U1W_LIMIT_CURRENT(uart_1_wire.target_current_ma);
+    info->cell_max_mv = uart_1_wire.cell_max_mv;
+    info->no_rx_10ms = s_u1w.any_rx_age_10ms;
 }

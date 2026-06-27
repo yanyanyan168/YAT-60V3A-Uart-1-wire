@@ -256,11 +256,11 @@ void Red_Flash(u8 period_n10ms)
     {
         period_n10ms = 2U;
     }
-    green_led_off();
+    GLED = 0;
     if(++cut_10ms > (period_n10ms >> 1))
     {
         cut_10ms = 0U;
-        red_led_toggle();
+        RLED = !RLED;
     }
 }
 void Ged_Flash(u8 period_n10ms)
@@ -270,11 +270,11 @@ void Ged_Flash(u8 period_n10ms)
     {
         period_n10ms = 2U;
     }
-    red_led_off();
+    RLED = 0;
     if(++cut_10ms > (period_n10ms >> 1))
     {
         cut_10ms = 0U;
-        green_led_toggle();
+        GLED = !GLED;
     }
 }
 void RGed_Flash(u8 period_n10ms)

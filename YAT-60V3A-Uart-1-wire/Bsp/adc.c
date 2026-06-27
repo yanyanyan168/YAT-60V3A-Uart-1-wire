@@ -18,24 +18,25 @@ void adc_init(void)
     NTC_ADC_ANALOG();
     BATT_ADC_ANALOG();
     CURR_ADC_ANALOG();
-    batt_divider_on();          /* 打开电池分压，保证 AIN3 采样有效。 */
 
     ADC_CFG1 &= ~(0x7U << 3);
-    ADC_CFG1 |= ADC_CLK_SET(5);
-    ADC_CFG2 = ADC_CHAN0_SMP_TIME(5);
+    ADC_CFG1 |= ADC_CLK_SET(5);    // 分频比为 n+1，6 分频
+    
+    ADC_CFG2 = ADC_CHAN0_SMP_TIME(5); // 通道 0 采样时间配置，配置比为 n+1 时钟
 
-    ADC_ACON1 &= ~(ADC_VREF_SEL(0x7) | ADC_EXREF_SEL(0x1));
-    ADC_ACON1 |= ADC_VREF_SEL(0x6) |
-                 ADC_TEN_SEL(0x3) |
-                 ADC_INREF_SEL(0x0) |
-                 ADC_EXREF_SEL(0x0);
-
-    ADC_ACON0 = ADC_CMP_EN(0x1) |
-                ADC_BIAS_EN(0x1) |
-                ADC_BIAS_SEL(0x1);
-
-    ADC_CFG0 |= ADC_CHAN0_EN(0x1) | ADC_EN(0x1);
-    delay_ms(1);
+    ADC_ACON1 &= ~(ADC_VREF_SEL(0x7) | ADC_EXREF_SEL(0x1));   // 关闭外部参考电压 ADCSELEXREF=0; (默认:ADCSELINREF=1;)
+    ADC_ACON1 |= ADC_VREF_SEL(0x6) |                          // 0x0:保留  0x1:2.0V  0x2:2.4V  0x3:3.0V  0x4:3.6V  0x5:4.2V  0x6:VCCA  0x7:保留位
+                 ADC_TEN_SEL(0x3)  |                          // ADC测试信号选择  0x0:测试信号  0x1:保留  0x2:保留  0x3:关闭测试信号
+                 ADC_INREF_SEL(0)  |                          // ADC中内部参考能使信号  0x0:关闭  0x1:打开
+                 ADC_EXREF_SEL(0);                            // ADC外部参考选择信号  0x0:不选择外部参考  0x1:选择EXREF(P07)为参考电压
+    
+    ADC_ACON0  = ADC_CMP_EN(0x1)  |                           // 打开ADC中的CMP使能信号
+                 ADC_BIAS_EN(0x1) |                           // 打开ADC偏置电流能使信号
+                 ADC_BIAS_SEL(0x1);
+    
+    ADC_CFG0  |= ADC_CHAN0_EN(0x1) |                          // 使能通道0转换
+                 ADC_EN(0x1);                                 // 使能A/D转换
+    delay_ms(1);                                              // 等待ADC模块配置稳定，需要等待20us以上
 }
 
 u16 adc_read_raw(ADC_Channel channel)

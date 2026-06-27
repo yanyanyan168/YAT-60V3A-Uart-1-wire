@@ -9,7 +9,6 @@
 
 #include "common.h"
 
-u8 pc_uart_func(u8 auto_tim);
-void pc_uart_auto_send_enable(bit enable);
+u8 pc_uart_func(void);
 
 #endif

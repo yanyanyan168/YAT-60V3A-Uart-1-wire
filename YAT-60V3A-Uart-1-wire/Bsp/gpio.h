@@ -6,9 +6,9 @@
   */
 #ifndef __BSP_GPIO_H__
 #define __BSP_GPIO_H__
-
+ 
 #include "common.h"
-
+ 
 /* 引脚功能表 ---------------------------------------------------------------
  * P31/P17 : 程序下载口，本项目不配置。
  * P30     : COM 单线 UART，必须使用硬件 UART1 复用。
@@ -27,10 +27,10 @@
  * P01     : 充电输出继电器控制，高电平闭合。
  * P00     : 假负载开关，高电平打开，负载卸载时短时开启。
  */
-
+ 
+/* 引脚别名定义，方便代码阅读与维护 */
 #define DUMMY_LOAD                          P00
-#define RELAY                               P01
-#define DCJK                                P01
+#define DCJK                                P01  // 充电输出控制
 #define REPAIR_OUTPUT                       P02
 #define BATT_ADC_PIN                        P03
 #define BATT_DIVIDER_EN                     P04
@@ -44,50 +44,30 @@
 #define RLED                                P23
 #define FAN                                 P26
 #define COM_PIN                             P30
-
-#define PSON_ON                             do{}while(0)
-#define PSON_OFF                            do{}while(0)
-
-/* GPIO 模式宏：严格使用 SDK 的 GPIO_Pxx_MODE_SEL 宏配置。 */
-#define DUMMY_LOAD_OUTPUT()                 do{P0_MD0=(P0_MD0&(~GPIO_P00_MODE_SEL(0x3)))|GPIO_P00_MODE_SEL(0x1);}while(0)
-#define RELAY_OUTPUT()                      do{P0_MD0=(P0_MD0&(~GPIO_P01_MODE_SEL(0x3)))|GPIO_P01_MODE_SEL(0x1);}while(0)
-#define REPAIR_OUTPUT_MODE()                do{P0_MD0=(P0_MD0&(~GPIO_P02_MODE_SEL(0x3)))|GPIO_P02_MODE_SEL(0x1);}while(0)
-#define BATT_ADC_ANALOG()                   do{P0_MD0=(P0_MD0&(~GPIO_P03_MODE_SEL(0x3)))|GPIO_P03_MODE_SEL(0x3);}while(0)
-#define BATT_DIVIDER_OUTPUT()               do{P0_MD1=(P0_MD1&(~GPIO_P04_MODE_SEL(0x3)))|GPIO_P04_MODE_SEL(0x1);}while(0)
-#define NTC_ADC_ANALOG()                    do{P0_MD1=(P0_MD1&(~GPIO_P05_MODE_SEL(0x3)))|GPIO_P05_MODE_SEL(0x3);}while(0)
-#define VADJ_OUTPUT()                       do{P0_MD1=(P0_MD1&(~GPIO_P07_MODE_SEL(0x3)))|GPIO_P07_MODE_SEL(0x1);}while(0)
-#define CURR_ADC_ANALOG()                   do{P1_MD0=(P1_MD0&(~GPIO_P10_MODE_SEL(0x3)))|GPIO_P10_MODE_SEL(0x3);}while(0)
-#define CURR_REF_PWM_OUTPUT()               do{P1_MD1=(P1_MD1&(~GPIO_P16_MODE_SEL(0x3)))|GPIO_P16_MODE_SEL(0x1);}while(0)
-#define GLED_OUTPUT()                       do{P2_MD0=(P2_MD0&(~GPIO_P22_MODE_SEL(0x3)))|GPIO_P22_MODE_SEL(0x1);}while(0)
-#define RLED_OUTPUT()                       do{P2_MD0=(P2_MD0&(~GPIO_P23_MODE_SEL(0x3)))|GPIO_P23_MODE_SEL(0x1);}while(0)
-#define DEBUG_RX_INPUT()                    do{P2_MD1=(P2_MD1&(~GPIO_P24_MODE_SEL(0x3)));}while(0)
-#define DEBUG_TX_OUTPUT()                   do{P2_MD1=(P2_MD1&(~GPIO_P25_MODE_SEL(0x3)))|GPIO_P25_MODE_SEL(0x1);}while(0)
-#define FAN_OUTPUT()                        do{P2_MD1=(P2_MD1&(~GPIO_P26_MODE_SEL(0x3)))|GPIO_P26_MODE_SEL(0x1);}while(0)
-#define P27_FLOAT_INPUT()                   do{P2_MD1=(P2_MD1&(~GPIO_P27_MODE_SEL(0x3)));}while(0)
-#define COM_UART_INPUT()                    do{P3_MD0=(P3_MD0&(~GPIO_P30_MODE_SEL(0x3)));}while(0)
-#define COM_UART_OUTPUT()                   do{P3_MD0=(P3_MD0&(~GPIO_P30_MODE_SEL(0x3)))|GPIO_P30_MODE_SEL(0x1);}while(0)
-
+ 
+ 
+/* GPIO 模式宏：严格使用 SDK 的 GPIO_Pxx_MODE_SEL 宏配置。
+ * 通过修改 Px_MDx 寄存器来设置引脚的工作模式。
+ */
+#define DUMMY_LOAD_OUTPUT()                 do{P0_MD0=(P0_MD0&(~GPIO_P00_MODE_SEL(0x3)))|GPIO_P00_MODE_SEL(0x1);}while(0) // P00推挽输出
+#define RELAY_OUTPUT()                      do{P0_MD0=(P0_MD0&(~GPIO_P01_MODE_SEL(0x3)))|GPIO_P01_MODE_SEL(0x1);}while(0) // P01推挽输出
+#define REPAIR_OUTPUT_MODE()                do{P0_MD0=(P0_MD0&(~GPIO_P02_MODE_SEL(0x3)))|GPIO_P02_MODE_SEL(0x1);}while(0) // P02推挽输出
+#define BATT_ADC_ANALOG()                   do{P0_MD0=(P0_MD0&(~GPIO_P03_MODE_SEL(0x3)))|GPIO_P03_MODE_SEL(0x3);}while(0) // P03模拟输入
+#define BATT_DIVIDER_OUTPUT()               do{P0_MD1=(P0_MD1&(~GPIO_P04_MODE_SEL(0x3)))|GPIO_P04_MODE_SEL(0x1);}while(0) // P04推挽输出
+#define NTC_ADC_ANALOG()                    do{P0_MD1=(P0_MD1&(~GPIO_P05_MODE_SEL(0x3)))|GPIO_P05_MODE_SEL(0x3);}while(0) // P05模拟输入
+#define VADJ_OUTPUT()                       do{P0_MD1=(P0_MD1&(~GPIO_P07_MODE_SEL(0x3)))|GPIO_P07_MODE_SEL(0x1);}while(0) // P07推挽输出
+#define CURR_ADC_ANALOG()                   do{P1_MD0=(P1_MD0&(~GPIO_P10_MODE_SEL(0x3)))|GPIO_P10_MODE_SEL(0x3);}while(0) // P10模拟输入
+#define CURR_REF_PWM_OUTPUT()               do{P1_MD1=(P1_MD1&(~GPIO_P16_MODE_SEL(0x3)))|GPIO_P16_MODE_SEL(0x1);}while(0) // P16推挽输出
+#define GLED_OUTPUT()                       do{P2_MD0=(P2_MD0&(~GPIO_P22_MODE_SEL(0x3)))|GPIO_P22_MODE_SEL(0x1);}while(0) // P22推挽输出
+#define RLED_OUTPUT()                       do{P2_MD0=(P2_MD0&(~GPIO_P23_MODE_SEL(0x3)))|GPIO_P23_MODE_SEL(0x1);}while(0) // P23推挽输出
+#define DEBUG_RX_INPUT()                    do{P2_MD1=(P2_MD1&(~GPIO_P24_MODE_SEL(0x3)));}while(0)                      // P24输入(高阻)
+#define DEBUG_TX_OUTPUT()                   do{P2_MD1=(P2_MD1&(~GPIO_P25_MODE_SEL(0x3)))|GPIO_P25_MODE_SEL(0x1);}while(0) // P25推挽输出
+#define FAN_OUTPUT()                        do{P2_MD1=(P2_MD1&(~GPIO_P26_MODE_SEL(0x3)))|GPIO_P26_MODE_SEL(0x1);}while(0) // P26推挽输出
+#define P27_FLOAT_INPUT()                   do{P2_MD1=(P2_MD1&(~GPIO_P27_MODE_SEL(0x3)));}while(0)                      // P27输入(高阻)
+#define COM_UART_INPUT()                    do{P3_MD0=(P3_MD0&(~GPIO_P30_MODE_SEL(0x3)));}while(0)                      // P30输入(高阻) - 用于UART1 RX
+#define COM_UART_OUTPUT()                   do{P3_MD0=(P3_MD0&(~GPIO_P30_MODE_SEL(0x3)))|GPIO_P30_MODE_SEL(0x1);}while(0) // P30推挽输出 - 用于UART1 TX
+ 
 void gpio_init(void);
-void gpio_output_safe_off(void);
-
-void relay_on(void);
-void relay_off(void);
-void fan_on(void);
-void fan_off(void);
-void dummy_load_on(void);
-void dummy_load_off(void);
-void vadj_high(void);
-void vadj_low(void);
-void batt_divider_on(void);
-void batt_divider_off(void);
-void repair_output_on(void);
-void repair_output_off(void);
-
-void red_led_on(void);
-void red_led_off(void);
-void red_led_toggle(void);
-void green_led_on(void);
-void green_led_off(void);
-void green_led_toggle(void);
-
+ 
+ 
 #endif

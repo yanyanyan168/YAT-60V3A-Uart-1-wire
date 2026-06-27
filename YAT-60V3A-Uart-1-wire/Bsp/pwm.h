@@ -14,8 +14,5 @@
 void pwm_init(void);
 #define PWM_Init()                        pwm_init()
 void set_Curr_Duty(u16 duty);
-void set_Vol_Duty(u16 duty);
 u16 get_Curr_Duty(void);
-u16 get_Vol_Duty(void);
-void pwm_set_current_ref_ma(u16 current_ma);
 #endif

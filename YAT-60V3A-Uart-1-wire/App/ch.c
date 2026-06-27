@@ -9,11 +9,12 @@
   * 3. 每次状态变化必须打印中文日志，便于 DEBUG 串口现场判断流程走向。
   * 4. 电压、电流和计时阈值统一来自 usr_cfg.h，不在流程中散落硬编码。
   *
-  * BMS异常处理边界：
-  * 1. BMS_HANDSHAKE 专门等待A0/A1/A4/A6/A7握手成功，握手完成后才进入CH_Check。
-  * 2. BMS 充电低温/高温进入 BMS_TEMP_ERR，输出关闭，温度恢复后回 CH_Check 继续充电。
-  * 3. BMS 其它异常或通信连续失败进入 BMS_ERR，输出关闭，只等拔电池恢复 CH_IDLE。
-  * 4. BT+ 拔包判断仍由主充电流程通过 val.vout < vRESET 完成，不放协议层处理。
+  * 通信处理边界：
+  * 1. BMS_HANDSHAKE 等待 A0/A1/A4/A6/A7/B1/B3/B4 全部收齐。
+  * 2. 充电相关状态只检查通信超时，不解析协议帧细节。
+  * 3. B6 由协议层在充电阶段固定要求打开充电 MOS；BMS普通异常由BMS自身处理。
+  * 4. 满电/普通异常由协议层主动拉低 COM；BMS温度异常继续通信检查恢复。
+  * 5. 拔电池全局处理：继电器闭合时用“小电流+无通信”，输出关闭时用电压检测。
   ******************************************************************************
   */
 #include "ch.h"
@@ -31,22 +32,20 @@ CH_STATUS_Types idata ch_state;
 CH_STATUS_Types idata last_state;
 
 static u8 idata s_cut[4];          /* 状态内确认计数，防止临界点抖动。 */
-static u8 idata s_tx_auto_tim;      /* DEBUG 自动上传计时，沿用 54.6V pc_uart_func(auto_tim)。 */
+static UART_1WIRE_CHARGE_INFO_Types idata s_u1w_info;  /* 一线通信给充电流程的状态快照。 */
 
 static u16 idata s_cccv_curr_limit_ma;        /* CCCV 实际限流电流，单位 mA。 */
 static u8  idata s_cccv_derate_cnt;           /* CCCV 降流间隔计数。 */
+static u8  idata s_remove_cnt;                /* 拔电池确认计数。 */
+static u16 idata s_vout_probe_period_10ms;    /* 满电/异常时分压检测间隔计数。 */
+static u8  idata s_vout_probe_on_10ms;        /* 满电/异常时分压检测开窗计数。 */
+static bit s_vout_sample_valid;               /* 本周期 val.vout 是否允许用于判断。 */
 
-/* 一线通信主机发送间隔。协议要求从机回复后空闲再发下一条，当前由主流程控制。 */
-#ifndef U1W_CH_SEND_INTERVAL_MS
-#define U1W_CH_SEND_INTERVAL_MS      (30U)
-#endif
-
-/* BMS握手阶段最长等待时间，避免电池接入后一直停在握手状态。 */
 #define BMS_HANDSHAKE_TIMEOUT_S      (20U)
-
-/* BMS温度类异常允许恢复后继续充电，其它BMS异常只等拔电池。 */
-#define BMS_TEMP_FAULT_MASK          (U1W_B4_LOW_TEMP | U1W_B4_HIGH_TEMP)
-#define BMS_OTHER_FAULT_MASK         ((u8)(U1W_B4_FAULT_MASK & (u8)(~BMS_TEMP_FAULT_MASK)))
+#define CH_VOUT_PROBE_PERIOD_10MS    (100U)   /* 满电/异常时每1秒打开一次分压检测 */
+#define CH_VOUT_PROBE_ON_10MS        (10U)    /* 每次打开100ms */
+#define CH_VOUT_PROBE_VALID_10MS     (5U)     /* 打开50ms后认为ADC有效 */
+#define CH_BMS_TEMP_MASK             (U1W_B4_LOW_TEMP | U1W_B4_HIGH_TEMP | U1W_B4_MOS_HOT)
 
 /*
  * 状态名表：
@@ -165,228 +164,6 @@ static bit ch_check_protect_state(void)
 
     return 0;
 }
-
-/**
-  * @brief  判断当前BMS状态是否为温度类异常。
-  */
-static bit ch_bms_temp_fault_active(void)
-{
-    if((uart_1_wire.charge_status & BMS_TEMP_FAULT_MASK) != 0U)
-    {
-        return 1;
-    }
-
-    return 0;
-}
-
-/**
-  * @brief  BMS 是否存在非温度类锁定异常。
-  */
-static bit ch_bms_other_fault_active(void)
-{
-    u8 st;
-
-    st = uart_1_wire.charge_status;
-
-    if((st & (U1W_B4_OV |
-              U1W_B4_MOS_HOT |
-              U1W_B4_OCP |
-              U1W_B4_SHORT |
-              U1W_B4_TIMEOUT |
-              U1W_B4_FAIL)) != 0U)
-    {
-        return 1;
-    }
-
-    return 0;
-}
-
-/**
-  * @brief  检查 BMS 充电状态异常，并按异常类型切状态。
-  *
-  * @return 1: 已经检测到 BMS 异常并切换状态
-  *         0: 当前没有 BMS 异常
-  *
-  * 说明：
-  * 1. BMS 充电低温/高温进入 BMS_TEMP_ERR，温度恢复后允许继续充电。
-  * 2. 其它异常统一进入 BMS_ERR，但日志原因要分开，便于现场判断。
-  * 3. BMS_ERR 为锁定类异常，只等拔电池恢复。
-  */
-static bit ch_bms_fault_check(void)
-{
-    u8 st;
-
-    if((ch_state != BMS_HANDSHAKE) && (uart_1_wire_is_retry_over() != 0))
-    {
-        uart_1_wire_set_charge_enable(0);
-        ch_set_state(BMS_ERR, "BMS通信异常");
-        return 1;
-    }
-
-    if(uart_1_wire_is_online() == 0)
-    {
-        return 0;
-    }
-
-    st = uart_1_wire.charge_status;
-
-    /* 温度类异常：允许恢复后继续充电 */
-    if((st & U1W_B4_LOW_TEMP) != 0U)
-    {
-        uart_1_wire_set_charge_enable(0);
-        ch_set_state(BMS_TEMP_ERR, "BMS低温");
-        return 1;
-    }
-
-    if((st & U1W_B4_HIGH_TEMP) != 0U)
-    {
-        uart_1_wire_set_charge_enable(0);
-        ch_set_state(BMS_TEMP_ERR, "BMS高温");
-        return 1;
-    }
-
-    /*
-     * 其它异常：锁定到 BMS_ERR，只等拔电池恢复。
-     * 多个异常同时存在时，按安全优先级只打印第一个最关键原因。
-     */
-    if((st & U1W_B4_FAIL) != 0U)
-    {
-        uart_1_wire_set_charge_enable(0);
-        ch_set_state(BMS_ERR, "BMS失效");
-        return 1;
-    }
-
-    if((st & U1W_B4_SHORT) != 0U)
-    {
-        uart_1_wire_set_charge_enable(0);
-        ch_set_state(BMS_ERR, "BMS短路");
-        return 1;
-    }
-
-    if((st & U1W_B4_OCP) != 0U)
-    {
-        uart_1_wire_set_charge_enable(0);
-        ch_set_state(BMS_ERR, "BMS过\xFD流");
-        return 1;
-    }
-
-    if((st & U1W_B4_MOS_HOT) != 0U)
-    {
-        uart_1_wire_set_charge_enable(0);
-        ch_set_state(BMS_ERR, "BMS MOS过\xFD温");
-        return 1;
-    }
-
-    if((st & U1W_B4_OV) != 0U)
-    {
-        uart_1_wire_set_charge_enable(0);
-        ch_set_state(BMS_ERR, "BMS过\xFD充");
-        return 1;
-    }
-
-    if((st & U1W_B4_TIMEOUT) != 0U)
-    {
-        uart_1_wire_set_charge_enable(0);
-        ch_set_state(BMS_ERR, "BMS超时");
-        return 1;
-    }
-
-    return 0;
-}
-
-/**
-  * @brief  获取目标充电电压，单位：mV。
-  *
-  * @note   数据来源：
-  *         1. 优先使用一线通信协议计算出的目标充电电压。
-  *         2. 该目标电压通常来自电池包协议参数，例如单节满充电压、串数等。
-  *
-  * @note   保护原则：
-  *         协议给出的目标电压不允许超过本机硬件允许的最大输出电压 SET_vMAX。
-  *         如果协议目标值过高，则强制钳位到 SET_vMAX。
-  *
-  * @note   这样做的目的：
-  *         1. 防止电池包协议数据异常导致输出过压。
-  *         2. 防止不同规格电池包误接时，超过本机设计能力。
-  *         3. 保证最终输出电压始终受本机硬件参数限制。
-  *
-  * @retval 目标充电电压，单位 mV。
-  */
-static u16 ch_get_target_voltage_mv(void)
-{
-    u16 target_voltage_mv;    /* 目标充电电压，单位 mV */
-
-    /*
-     * 从一线通信模块获取目标充电电压。
-     *
-     * 该函数内部通常会根据协议参数计算：
-     *  目标电压 = 单节满充电压 × 电池串数
-     *
-     * 如果协议参数无效，底层函数应返回默认值或安全值。
-     */
-    target_voltage_mv = uart_1_wire_get_target_voltage_mv();
-
-    /*
-     * 目标电压上限保护。
-     *
-     * SET_vMAX 是本机允许的最大输出电压，
-     * 不管协议给出的目标电压是多少，都不能超过该硬件上限。
-     */
-    if(target_voltage_mv > SET_vMAX)
-    {
-        target_voltage_mv = SET_vMAX;
-    }
-
-    return target_voltage_mv;
-}
-
-/**
-  * @brief  获取目标充电电流，单位：mA。
-  *
-  * @note   数据来源：
-  *         1. 优先使用一线通信协议计算出的目标充电电流。
-  *         2. 该目标电流通常来自电池包协议参数，例如单节最大允许电流、
-  *            二级温度限流、电池包允许充电电流等。
-  *
-  * @note   保护原则：
-  *         协议给出的目标电流不允许超过本机硬件允许的最大充电电流 iMAX。
-  *         如果协议目标值过高，则强制钳位到 iMAX。
-  *
-  * @note   这样做的目的：
-  *         1. 防止协议异常导致充电电流过大。
-  *         2. 防止超过充电器功率器件、采样电阻、变压器等硬件能力。
-  *         3. 保证最终充电电流始终受本机硬件参数限制。
-  *
-  * @retval 目标充电电流，单位 mA。
-  */
-static u16 ch_get_target_current_ma(void)
-{
-    u16 target_current_ma;    /* 目标充电电流，单位 mA */
-
-    /*
-     * 从一线通信模块获取目标充电电流。
-     *
-     * 该函数内部通常会根据协议参数计算：
-     *  目标电流 = 电池包允许电流、本机最大电流、温度限流等综合结果
-     *
-     * 如果协议参数无效，底层函数应返回默认值或安全值。
-     */
-    target_current_ma = uart_1_wire_get_target_current_ma();
-
-    /*
-     * 目标电流上限保护。
-     *
-     * iMAX 是本机允许的最大充电电流，
-     * 不管协议给出的目标电流是多少，都不能超过该硬件上限。
-     */
-    if(target_current_ma > iMAX)
-    {
-        target_current_ma = iMAX;
-    }
-
-    return target_current_ma;
-}
-
 
 /**
   * @brief  获取 CCCV 阶段实际使用的目标电流，单位：mA。
@@ -717,160 +494,204 @@ static u16 ch_get_cccv_timeout_min(u16 target_current_ma)
   */
 static void ch_output_all_off(void)
 {
-    /*
-     * 通知一线通信模块：后续 B6 控制中不再允许电池包充电。
-     * 参数 0 表示关闭充电使能。
-     */
-    uart_1_wire_set_charge_enable(0);
 
-    /*
-     * 关闭继电器输出。
-     * 用于断开主充电输出通路或相关功率通路。
-     */
-    relay_off();
-
-    /*
-     * 关闭超低压修复输出。
-     * 防止退出修复模式后仍保持修复电压/修复电流输出。
-     */
-    repair_output_off();
-
-    /*
-     * 将电压调节控制拉到低输出状态。
-     * 目的是让电源环路回到安全低压/关闭输出方向。
-     */
-    vadj_low();
-
-    /*
-     * 关闭风扇。
-     * 输出关闭后不再需要强制散热。
-     * 如果后续有延时散热需求，应由独立风扇控制逻辑处理。
-     */
-    fan_off();
-
-    /*
-     * 关闭假负载。
-     * 防止在非充电状态下继续消耗输出端能量。
-     */
-    dummy_load_off();
-
-    /*
-     * 电流 PWM 占空比清零。
-     * 确保恒流环路不再给出充电电流指令。
-     */
-    set_Curr_Duty(0);
-
-    /*
-     * 电压 PWM 占空比清零。
-     * 确保恒压环路不再给出输出电压指令。
-     */
-    set_Vol_Duty(0);
+    DCJK = 0;
+    REPAIR_OUTPUT = 0;   // 低预充关闭
+    VADJ = 0;
+    FAN = 0;
+    DUMMY_LOAD = 0;  // 关闭假负载
+    set_Curr_Duty(PWMMAX/2);
 }
 
 /**
-  * @brief  保护状态下等待电池端电压恢复到空载判据。
+  * @brief  判断BMS是否正在报告充电温度类异常。
   */
-static void idle_ck(void)
+static bit ch_bms_temp_fault_active(void)
 {
-    if(val.vout < vRESET)
+    if((s_u1w_info.charge_status & CH_BMS_TEMP_MASK) != 0U)
     {
-        if(++s_cut[2] >= 50U)
+        return 1;
+    }
+
+    return 0;
+}
+
+/**
+  * @brief  判断当前是否属于继电器闭合的正常充电阶段。
+  * @note   这些状态拔电池时不能用电压判断，因为 val.vout 可能是充电器自身输出。
+  */
+static bit ch_relay_charge_state(void)
+{
+    if((ch_state == CH_Pre1) || (ch_state == CH_CCCV))
+    {
+        return 1;
+    }
+
+    return 0;
+}
+
+/**
+  * @brief  满电/异常锁止状态是否需要间歇打开电压检测。
+  */
+static bit ch_need_vout_probe(void)
+{
+    switch(ch_state)
+    {
+    case CH_FULL:
+    case BMS_TEMP_ERR:
+    case BMS_ERR:
+    case CH_OTP:
+    case CH_TimOut:
+    case CCCV_TimOut:
+    case CH_UVP:
+    case CH_OVP:
+    case CH_OCP:
+    case NTC_ERR:
+    case HW_ERR:
+        return 1;
+
+    default:
+        return 0;
+    }
+}
+
+static void ch_vout_probe_reset(void)
+{
+    s_vout_probe_period_10ms = CH_VOUT_PROBE_PERIOD_10MS;
+    s_vout_probe_on_10ms = 0U;
+    s_vout_sample_valid = 0;
+}
+
+/**
+  * @brief  每10ms准备一次电池电压采样使能。
+  * @note   正常充电相关状态常开；满电/异常状态间歇开窗，避免分压长期放电。
+  */
+static void ch_prepare_vout_sample_10ms(void)
+{
+    s_vout_sample_valid = 0;
+
+    if((ch_state == CH_IDLE) ||
+       (ch_state == BMS_HANDSHAKE) ||
+       (ch_state == CH_Check) ||
+       (ch_state == CH_REPAIR) ||
+       (ch_state == CH_Pre1) ||
+       (ch_state == CH_CCCV) ||
+       (ch_state == CH_AGING))
+    {
+        BATT_DIVIDER_EN = 1;
+        s_vout_sample_valid = 1;
+        s_vout_probe_period_10ms = 0U;
+        s_vout_probe_on_10ms = 0U;
+        return;
+    }
+
+    if(ch_need_vout_probe() == 0)
+    {
+        BATT_DIVIDER_EN = 0;
+        return;
+    }
+
+    if(s_vout_probe_on_10ms != 0U)
+    {
+        BATT_DIVIDER_EN = 1;
+
+        if(s_vout_probe_on_10ms >= CH_VOUT_PROBE_VALID_10MS)
         {
-            uart_1_wire_reset_link();
-            ch_set_state(CH_IDLE, "拔电池");
+            s_vout_sample_valid = 1;
         }
+
+        s_vout_probe_on_10ms++;
+        if(s_vout_probe_on_10ms > CH_VOUT_PROBE_ON_10MS)
+        {
+            s_vout_probe_on_10ms = 0U;
+            s_vout_probe_period_10ms = 0U;
+            BATT_DIVIDER_EN = 0;
+            s_vout_sample_valid = 0;
+        }
+        return;
+    }
+
+    BATT_DIVIDER_EN = 0;
+    if(s_vout_probe_period_10ms < CH_VOUT_PROBE_PERIOD_10MS)
+    {
+        s_vout_probe_period_10ms++;
     }
     else
     {
-        s_cut[2] = 0;
+        s_vout_probe_on_10ms = 1U;
+        BATT_DIVIDER_EN = 1;
     }
 }
 
 /**
-  * @brief  一线通信 10ms 调度任务。
-  *
-  * @note   本函数由主充电流程每 10ms 调用一次，负责：
-  *         1. 调用协议层 poll，处理接收、校验、解析、超时计数。
-  *         2. 按固定间隔发送下一条一线通信命令。
-  *         3. 通信连续失败后不主动复位，由状态机统一切入 BMS_ERR。
-  *
-  * @note   发送节奏说明：
-  *         虽然本函数每 10ms 调用一次，但实际发送间隔由
-  *         U1W_CH_SEND_INTERVAL_MS 控制，避免主机连续发送太快，
-  *         给电池包留出回复和总线空闲时间。
+  * @brief  除待机外，全局判断电池是否拔出。
+  * @return 1 表示已经确认拔出并回到待机。
   */
-static void ch_uart_1wire_task_10ms(void)
+static bit ch_battery_removed_check_10ms(void)
 {
-    static u16 idata send_deadline_ms = 0U;  /* 下一次允许发送的时间点，单位 ms */
+    u8 need_cnt;
 
-    /*
-     * 协议层 10ms 轮询：
-     * - 从 UART1 FIFO 取数据；
-     * - 组帧、校验、解析；
-     * - 更新 A0/A1/A4/A6/A7/B1/B3/B4/B6 等状态；
-     * - 处理回复超时和重试计数。
-     */
-    uart_1_wire_poll_10ms();
-
-    /*
-     * BMS_ERR 是锁定类异常，只等拔电池恢复。
-     *
-     * 进入 BMS_ERR 后：
-     * - 关闭充电使能；
-     * - 不再主动发送 B1/B3/B4/B6；
-     * - 避免 BMS 已经异常时仍持续通信或误开 MOS。
-     *
-     * 注意：
-     * BMS_TEMP_ERR 不能停止通信，因为温度恢复依赖 B4 状态继续更新。
-     */
-    if(ch_state == BMS_ERR)
+    if(ch_state == CH_IDLE)
     {
-        uart_1_wire_set_charge_enable(0);
-        return;
+        s_remove_cnt = 0U;
+        return 0;
     }
 
-    /*
-     * 第一次进入时初始化发送时间点。
-     * 后续由 timer_period_elapsed() 自动推进下一次触发时间。
-     */
-    if(send_deadline_ms == 0U)
+    if(ch_relay_charge_state() != 0)
     {
-        send_deadline_ms = timer_deadline_ms(U1W_CH_SEND_INTERVAL_MS);
+        /*
+         * 继电器闭合时，val.vout 可能是充电器自身输出，不能作为拔电池依据。
+         * 使用“小电流 + 1秒无合法通信帧”判断。
+         */
+        if((val.curr < (u16)(iGED / 2U)) && (s_u1w_info.no_rx_10ms >= 100U))
+        {
+            if(++s_remove_cnt >= 10U)
+            {
+                ch_output_all_off();
+                BATT_DIVIDER_EN = 0;
+                uart_1_wire_reset_link();
+                ch_vout_probe_reset();
+                ch_set_state(CH_IDLE, "拔电池");
+                return 1;
+            }
+        }
+        else
+        {
+            s_remove_cnt = 0U;
+        }
+        return 0;
     }
 
-    /*
-     * 发送间隔未到，不发送。
-     *
-     * timer_period_elapsed() 支持 tick 回绕，
-     * 且主循环卡顿时只补一次触发，不会连续补发多帧。
-     */
-    if(timer_period_elapsed(&send_deadline_ms, U1W_CH_SEND_INTERVAL_MS) == 0)
+    if((s_vout_sample_valid != 0) && (val.vout < vRESET))
     {
-        return;
+        if(ch_need_vout_probe() != 0)
+        {
+            need_cnt = 2U;      /* 间歇检测窗口下，连续2次有效窗口确认拔出。 */
+        }
+        else
+        {
+            need_cnt = 50U;     /* 常开检测下，约500ms确认拔出。 */
+        }
+
+        if(++s_remove_cnt >= need_cnt)
+        {
+            ch_output_all_off();
+            BATT_DIVIDER_EN = 0;
+            uart_1_wire_reset_link();
+            ch_vout_probe_reset();
+            ch_set_state(CH_IDLE, "拔电池");
+            return 1;
+        }
+    }
+    else if(s_vout_sample_valid != 0)
+    {
+        s_remove_cnt = 0U;
     }
 
-    /*
-     * 连续通信失败已经超过协议层允许上限。
-     * 这里只停止继续发送，不在这里切状态；
-     * 由 ch_bms_fault_check() 统一切入 BMS_ERR，保持状态机职责清楚。
-     */
-    if(uart_1_wire_is_retry_over() != 0)
-    {
-        return;
-    }
-
-    /*
-     * 协议层允许发送时，发送下一条命令。
-     *
-     * 典型流程：
-     * 握手阶段：A0 -> A1 -> A4 -> A6 -> A7
-     * 在线阶段：B1 -> B3 -> B4 -> B6 循环
-     */
-    if(uart_1_wire_can_send() != 0)
-    {
-        uart_1_wire_send_next();
-    }
+    return 0;
 }
+
+
 
 
 void usr_ch_func(void)
@@ -879,11 +700,10 @@ void usr_ch_func(void)
     u16 target_current_ma;
     u16 pre_end_voltage_mv;
     u16 cccv_timeout_min;
-    u16 next_10ms;
+    u8 u1w_stage;
 
     ch_state = CH_IDLE;
     last_state = CH_IDLE;
-    s_tx_auto_tim = 0;
 
     next_10ms = timer_deadline_ms(TASK_10MS);
     uart_1_wire_reset_link();
@@ -893,18 +713,67 @@ void usr_ch_func(void)
     {
         if(timer_period_elapsed(&next_10ms, TASK_10MS) != 0)
         {
-            flg_10ms = 0;
-            s_tx_auto_tim++;
             wdt_feed();
 
             /* DEBUG 口收到 *RST 后切入校准流程，保持 54.6V 行为。 */
-            if(pc_uart_func(s_tx_auto_tim) == 1U)
+            if(pc_uart_func() == 1U)
             {
                 flg_cal_mode = 1;
                 break;
             }
 
-            ch_uart_1wire_task_10ms();
+            /*
+             * 一线通信阶段由充电流程直接决定：
+             * - 待机：释放 COM，不通信；
+             * - BMS_HANDSHAKE：轮询握手帧；
+             * - 正常充电：轮询 B1/B3/B4/B6；
+             * - 满电：按协议发送 B6 03 SOC，3 分钟后主动拉低 COM；
+             * - BMS温度异常：继续轮询 B3/B4 等待恢复；
+             * - 普通异常：主动拉低 COM，告知 BMS 主机断开。
+             */
+            switch(ch_state)
+            {
+            case BMS_HANDSHAKE:
+                u1w_stage = U1W_STAGE_HANDSHAKE;
+                break;
+
+            case CH_Check:
+            case CH_REPAIR:
+            case CH_Pre1:
+            case CH_CCCV:
+                u1w_stage = U1W_STAGE_CHARGE;
+                break;
+
+            case CH_FULL:
+                u1w_stage = U1W_STAGE_FULL_DISPLAY;
+                break;
+
+            case BMS_TEMP_ERR:
+                u1w_stage = U1W_STAGE_TEMP_WAIT;
+                break;
+
+            case BMS_ERR:
+            case CH_OTP:
+            case CH_TimOut:
+            case CCCV_TimOut:
+            case CH_UVP:
+            case CH_OVP:
+            case CH_OCP:
+            case NTC_ERR:
+            case HW_ERR:
+                u1w_stage = U1W_STAGE_PULL_LOW;
+                break;
+
+            default:
+                u1w_stage = U1W_STAGE_STOP;
+                break;
+            }
+            uart_1_wire_set_stage(u1w_stage);
+            uart_1_wire_poll_10ms();
+            uart_1_wire_get_info(&s_u1w_info);
+
+            /* 先按当前状态准备电压采样使能，再更新ADC工程量。 */
+            ch_prepare_vout_sample_10ms();
 
             /* 每 10ms 更新 ADC 工程量和保护标志。 */
             adc_sample_all();
@@ -916,8 +785,22 @@ void usr_ch_func(void)
                 ch_output_all_off();
             }
 
-            target_voltage_mv = ch_get_target_voltage_mv();
-            target_current_ma = ch_get_target_current_ma();
+            if(ch_battery_removed_check_10ms() != 0)
+            {
+                continue;
+            }
+
+            target_voltage_mv = s_u1w_info.target_voltage_mv;
+            if(target_voltage_mv > SET_vMAX)
+            {
+                target_voltage_mv = SET_vMAX;
+            }
+
+            target_current_ma = s_u1w_info.target_current_ma;
+            if(target_current_ma > iMAX)
+            {
+                target_current_ma = iMAX;
+            }
             pre_end_voltage_mv = ch_get_pre_end_voltage_mv();
             cccv_timeout_min = ch_get_cccv_timeout_min(target_current_ma);
             
@@ -928,6 +811,8 @@ void usr_ch_func(void)
                 s_cut[1] = 0;
                 s_cut[2] = 0;
                 s_cut[3] = 0;
+                s_remove_cnt = 0U;
+                ch_vout_probe_reset();
                 Tim.ms = 0;
                 Tim.s = 0;
                 Tim.min = 0;
@@ -938,6 +823,8 @@ void usr_ch_func(void)
                     s_cccv_derate_cnt = 0U;
                 }
             }
+
+//            ch_state = CH_AGING;
 
             switch(ch_state)
             {
@@ -950,14 +837,14 @@ void usr_ch_func(void)
                  * - 检测到电池后重新从A0开始握手，并进入BMS握手等待状态。
                  */
                 ch_output_all_off();
-                red_led_on();
-                green_led_off();
+                RLED = 1;
+                GLED = 0;
+                BATT_DIVIDER_EN = 1;          /* 打开电池分压，保证 AIN3 采样有效。 */
                 if(val.vout >= vSTART)
                 {
                     if(++s_cut[0] >= 50U)
                     {
                         uart_1_wire_reset_link();
-                        uart_1_wire_set_charge_enable(0);
                         ch_set_state(BMS_HANDSHAKE, "插电池");
                     }
                 }
@@ -971,19 +858,17 @@ void usr_ch_func(void)
                 /*
                  * 等待握手成功：
                  * - 输出保持关闭；
-                 * - 等待协议层完成 A0/A1/A4/A6/A7；
-                 * - 通信连续失败进入BMS_ERR；
-                 * - 握手期间如BMS已回复温度/其它异常，则按BMS异常分类处理；
-                 * - 握手成功后才进入CH_Check，由CH_Check决定预充或CCCV。
+                 * - 等待协议层完成 A0/A1/A4/A6/A7/B1/B3/B4；
+                 * - 通信超时进入 BMS_ERR；
+                 * - 握手成功后才进入 CH_Check，由 CH_Check 决定修复/预充/CCCV。
                  */
                 ch_output_all_off();
-                red_led_on();
-                green_led_off();
+                RLED = 1;
+                GLED = 0;
 
                 TimCut();
                 if(Tim.s >= BMS_HANDSHAKE_TIMEOUT_S)
                 {
-                    uart_1_wire_set_charge_enable(0);
                     ch_set_state(BMS_ERR, "握手超时");
                 }
                 else if(val.vout < vSTART)
@@ -997,17 +882,17 @@ void usr_ch_func(void)
                 {
                     s_cut[0] = 0U;
 
-                    if(ch_bms_fault_check() != 0)
+                    if(s_u1w_info.comm_timeout != 0U)
                     {
-                        /* 已经明确切入BMS_TEMP_ERR或BMS_ERR。 */
+                        ch_set_state(BMS_ERR, "BMS通信超时");
                     }
-                    else if(uart_1_wire_is_online() != 0)
+                    else if(s_u1w_info.handshake_ok != 0U)
                     {
                         ch_set_state(CH_Check, "握手成功");
                     }
                     else
                     {
-                        /* 继续等待A0/A1/A4/A6/A7完成。 */
+                        /* 继续等待 A0/A1/A4/A6/A7/B1/B3/B4 收齐。 */
                     }
                 }
                 break;
@@ -1018,11 +903,11 @@ void usr_ch_func(void)
                  * - 此状态默认已经完成BMS握手；
                  * - 输出保持关闭；
                  * - 若通信被复位或尚未在线，则退回BMS_HANDSHAKE等待；
-                 * - BMS无明确异常后，再根据电压进入预充或CCCV。
+                 * - 通信正常后，再根据电压进入修复、预充或CCCV。
                  */
                 ch_output_all_off();
-                red_led_on();
-                green_led_off();
+                RLED = 1;
+                GLED = 0;
 
                 if(val.vout < vSTART)
                 {
@@ -1039,27 +924,29 @@ void usr_ch_func(void)
                      */
                     s_cut[0] = 0U;
 
-                    if(ch_bms_fault_check() != 0)
+                    if(s_u1w_info.comm_timeout != 0U)
                     {
-                        /* 已经明确切入BMS_TEMP_ERR或BMS_ERR。 */
+                        ch_set_state(BMS_ERR, "BMS通信超时");
                     }
-                    else if(uart_1_wire_is_online() == 0)
+                    else if(ch_bms_temp_fault_active() != 0)
                     {
+                        ch_set_state(BMS_TEMP_ERR, "BMS温度异常");
+                    }
+                    else if(s_u1w_info.handshake_ok == 0U)
+                    {
+                        uart_1_wire_reset_link();
                         ch_set_state(BMS_HANDSHAKE, "等握手");
                     }
                     else if(val.vout < vPRE_30V)
                     {
-                        uart_1_wire_set_charge_enable(1);
                         ch_set_state(CH_REPAIR, "通信OK进修复");
                     }
                     else if(val.vout < pre_end_voltage_mv)
                     {
-                        uart_1_wire_set_charge_enable(1);
                         ch_set_state(CH_Pre1, "通信OK进预充");
                     }
                     else
                     {
-                        uart_1_wire_set_charge_enable(1);
                         ch_set_state(CH_CCCV, "通信OK进CCCV");
                     }
                 }
@@ -1072,23 +959,29 @@ void usr_ch_func(void)
                  * - 电流使用 iREPAIR，保持小电流修复；
                  * - 到 vPRE_30V 后转入预充，超时进入预充超时异常。
                  */
-                if(ch_bms_fault_check() != 0)
+                if(s_u1w_info.comm_timeout != 0U)
                 {
+                    ch_set_state(BMS_ERR, "BMS通信超时");
                     break;
                 }
-
-                uart_1_wire_set_charge_enable(1);
-                relay_off();
-                vadj_low();
-                repair_output_on();
-                fan_on();
+                if(ch_bms_temp_fault_active() != 0)
+                {
+                    ch_set_state(BMS_TEMP_ERR, "BMS温度异常");
+                    break;
+                }
+                DCJK = 0;
+                VADJ = 0;
+                if(DCJK == 0)
+                {
+                    REPAIR_OUTPUT = 1;
+                }
+                FAN = 1;
                 Ged_Flash(50);
                 TimCut();
-                pwm_set_current_ref_ma(iREPAIR);
+                set_Curr_Duty(SET_CURR(iREPAIR));
 
                 if(Tim.min >= TIM_PRE)
                 {
-                    uart_1_wire_set_charge_enable(0);
                     ch_set_state(CH_TimOut, "修复超时");
                 }
                 else if(val.vout >= vPRE_30V)
@@ -1107,34 +1000,34 @@ void usr_ch_func(void)
             case CH_Pre1:
                 /*
                  * 预充：
-                 * - 正常充电前先检查BMS异常；
-                 * - BMS温度异常可恢复，其它BMS异常锁定到拔电池。
+                 * - 正常预充时持续检查通信超时；
+                 * - B4 状态位只记录，BMS 自己处理自身异常。
                  */
-                if(ch_bms_fault_check() != 0)
+                if(s_u1w_info.comm_timeout != 0U)
                 {
+                    ch_set_state(BMS_ERR, "BMS通信超时");
+                    break;
+                }
+                if(ch_bms_temp_fault_active() != 0)
+                {
+                    ch_set_state(BMS_TEMP_ERR, "BMS温度异常");
                     break;
                 }
 
                 /*
-                 * 不再使用 uart_1_wire_is_ready()==0 这种笼统判断。
-                 * 充电中只按明确原因处理：
-                 * - 连续通信失败超过上限：ch_bms_fault_check() -> BMS_ERR；
-                 * - BMS过/欠温：ch_bms_fault_check() -> BMS_TEMP_ERR；
-                 * - BMS其它异常：ch_bms_fault_check() -> BMS_ERR。
-                 * 单帧等待/临时未更新不立即判故障，交给协议层重试计数处理。
+                 * 异步通信版只在这里处理通信超时。
+                 * B4 状态位只记录，BMS 自身异常由 BMS 自己处理 MOS。
                  */
-                uart_1_wire_set_charge_enable(1);
-                relay_on();
-                repair_output_off();
-                vadj_high();
-                fan_on();
+                DCJK = 1;
+                REPAIR_OUTPUT = 0;
+                VADJ = 1;
+                FAN = 1;
                 Ged_Flash(50);
                 TimCut();
-                pwm_set_current_ref_ma(iPRE);
+                set_Curr_Duty(SET_CURR(iPRE));
 
                 if(Tim.min >= TIM_PRE)
                 {
-                    uart_1_wire_set_charge_enable(0);
                     ch_set_state(CH_TimOut, "预充超时");
                 }
                 else if(val.vout >= pre_end_voltage_mv)
@@ -1155,30 +1048,30 @@ void usr_ch_func(void)
                  * 恒流恒压：
                  * - 按协议目标电压/电流设置PWM；
                  * - 满电判断使用协议目标电压，而不是固定SET_vMAX；
-                 * - BMS温度异常恢复后继续充电，其它BMS异常锁定到拔电池。
+                 * - 充电中持续检查通信超时；B4 状态位只记录。
                  */
-                if(ch_bms_fault_check() != 0)
+                if(s_u1w_info.comm_timeout != 0U)
                 {
+                    ch_set_state(BMS_ERR, "BMS通信超时");
+                    break;
+                }
+                if(ch_bms_temp_fault_active() != 0)
+                {
+                    ch_set_state(BMS_TEMP_ERR, "BMS温度异常");
                     break;
                 }
 
                 /*
-                 * 不再使用 uart_1_wire_is_ready()==0 这种笼统判断。
-                 * 充电中只按明确原因处理：
-                 * - 连续通信失败超过上限：ch_bms_fault_check() -> BMS_ERR；
-                 * - BMS过/欠温：ch_bms_fault_check() -> BMS_TEMP_ERR；
-                 * - BMS其它异常：ch_bms_fault_check() -> BMS_ERR。
-                 * 单帧等待/临时未更新不立即判故障，交给协议层重试计数处理。
+                 * 异步通信版只在这里处理通信超时。
+                 * B4 状态位只记录，BMS 自身异常由 BMS 自己处理 MOS。
                  */
-                uart_1_wire_set_charge_enable(1);
-                relay_on();
-                repair_output_off();
-                vadj_high();
-                fan_on();
-                red_led_off();
+                DCJK = 1;
+                REPAIR_OUTPUT = 0;
+                VADJ = 1;
+                FAN = 1;
+                RLED = 0;
                 Ged_Flash(50);
                 TimCut();
-                set_Vol_Duty(SET_VOL(target_voltage_mv));
 
                 /*
                  * 最高单节电压达到 4.195V 后，CCCV 电流每 0.2 秒最多降低 0.1A。
@@ -1189,15 +1082,12 @@ void usr_ch_func(void)
 
                 if(Tim.min >= cccv_timeout_min)
                 {
-                    uart_1_wire_set_charge_enable(0);
                     ch_set_state(CCCV_TimOut, "CCCV超时");
                 }
                 else if((val.vout >= target_voltage_mv) && (val.curr <= iGED))
                 {
                     if(++s_cut[0] >= 100U)
                     {
-                        uart_1_wire_set_charge_enable(0);
-                        uart_1_wire_start_full_display();
                         ch_set_state(CH_FULL, "转满电");
                     }
                 }
@@ -1211,21 +1101,21 @@ void usr_ch_func(void)
                 /*
                  * 满电：
                  * - 停止输出并点亮绿灯；
-                 * - 满电后由协议层在B6中显示电量3分钟；
-                 * - 电压跌到再充阈值以下，确认后回检测状态。
+                 * - 按协议发送 B6 03 SOC，3分钟后由通信层主动拉低COM；
+                 * - 分压检测默认关闭，只在检测窗口有效时判断回充。
                  */
                 ch_output_all_off();
-                red_led_off();
-                green_led_on();
-                if(val.vout < vCH60)
+                RLED = 0;
+                GLED = 1;
+                if((s_vout_sample_valid != 0) && (val.vout < vCH60))
                 {
-                    if(++s_cut[0] >= 50U)
+                    if(++s_cut[0] >= 2U)
                     {
-                        uart_1_wire_stop_full_display();
-                        ch_set_state(CH_Check, "满电回落");
+                        uart_1_wire_reset_link();
+                        ch_set_state(BMS_HANDSHAKE, "满电回落重新握手");
                     }
                 }
-                else
+                else if(s_vout_sample_valid != 0)
                 {
                     s_cut[0] = 0;
                 }
@@ -1233,36 +1123,33 @@ void usr_ch_func(void)
 
             case BMS_TEMP_ERR:
                 /*
-                 * BMS过/欠温：
+                 * BMS温度异常：
                  * - 输出关闭；
-                 * - 保持通信，持续获取B4状态；
-                 * - 温度位恢复且没有其它BMS异常后，回检测状态继续充电。
+                 * - 不主动拉低COM；
+                 * - 继续轮询B3/B4，等BMS温度状态恢复后重新握手。
                  */
                 ch_output_all_off();
-                uart_1_wire_set_charge_enable(0);
                 RGed_Flash(50);
-
-                if(ch_bms_other_fault_active() != 0)
+                if(s_u1w_info.comm_timeout != 0U)
                 {
-                    ch_set_state(BMS_ERR, "BMS其它异常");
+                    ch_set_state(BMS_ERR, "温度等待通信超时");
                 }
-                else if((uart_1_wire_is_online() != 0) && (ch_bms_temp_fault_active() == 0))
+                else if(ch_bms_temp_fault_active() == 0)
                 {
-                    uart_1_wire_clear_error();
-                    ch_set_state(CH_Check, "BMS温度恢复");
+                    uart_1_wire_reset_link();
+                    ch_set_state(BMS_HANDSHAKE, "BMS温度恢复");
                 }
                 break;
 
             case BMS_ERR:
                 /*
-                 * BMS非温度异常/通信连续失败：
+                 * BMS通信异常：
                  * - 输出关闭；
-                 * - 不因BMS状态恢复自动继续；
-                 * - 只等拔电池，即BT+电压降到空载判据后回CH_IDLE。
+                 * - 主动拉低COM，告知BMS主机断开；
+                 * - 拔电池由全局拔出检测统一处理。
                  */
                 ch_output_all_off();
                 Red_Flash(50);
-                idle_ck();
                 break;
 
             case CH_OTP:
@@ -1273,11 +1160,8 @@ void usr_ch_func(void)
                 RGed_Flash(50);
                 if(ch_flag.ch_hotErr == 0)
                 {
-                    ch_set_state(CH_Check, "OTP恢复");
-                }
-                if(ch_fault_flag_active() == 0)
-                {
-                    idle_ck();
+                    uart_1_wire_reset_link();
+                    ch_set_state(BMS_HANDSHAKE, "OTP恢复重新握手");
                 }
                 break;
 
@@ -1291,10 +1175,6 @@ void usr_ch_func(void)
                  */
                 ch_output_all_off();
                 Red_Flash(50);
-                if(ch_fault_flag_active() == 0)
-                {
-                    idle_ck();
-                }
                 break;
 
             case NTC_ERR:
@@ -1304,19 +1184,15 @@ void usr_ch_func(void)
                  */
                 ch_output_all_off();
                 RGed_Flash(50);
-                if(ch_fault_flag_active() == 0)
-                {
-                    idle_ck();
-                }
                 break;
 
             case CH_AGING:
                 /*
                  * 老化模式预留。
                  */
-                relay_on();
-                vadj_high();
-                fan_on();
+                DCJK = 1;
+                VADJ = 1;
+                FAN = 1;
                 set_Curr_Duty(SET_CURR(iMAX));
                 Ged_Flash(50);
                 break;

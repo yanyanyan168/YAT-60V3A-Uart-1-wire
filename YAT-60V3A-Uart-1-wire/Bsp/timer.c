@@ -5,21 +5,40 @@
   ******************************************************************************
   */
 #include "timer.h"
-data bit flg_10ms;
+
 volatile u16 idata g_sys_tick_ms;
 static u8 idata s_tick_10ms_count;
+
+// 1ms 周期的中断
 void timer_init(void)
 {
+    /* 
+     * 定时器周期值计算：系统时钟 / 预分频(32) / 目标频率(1000Hz) - 1
+     * 计算结果：24000000 / 32 / 1000 - 1 = 749
+     * 配置的是 1ms 周期的中断
+     */
 #define TIMER4_1MS_PERIOD_VAL          (SYS_CLK_HZ / 32UL / 1000UL - 1UL)
-    __EnableIRQ(TMR4_IRQn);
-    TMR_ALLCON = TMR4_CNT_CLR(0x1);
+    
+    __EnableIRQ(TMR4_IRQn);                             // 使能TIMER4模块中断
+    
+    TMR_ALLCON = TMR4_CNT_CLR(0x1);                    // 清除Timer4计数值
+    
+    // 写入周期值低8位
     TMR4_CAP10 = TMR4_PRD_VAL_L((u8)((TIMER4_1MS_PERIOD_VAL >> 0) & 0xFFU));
+    // 写入周期值高8位
     TMR4_CAP11 = TMR4_PRD_VAL_H((u8)((TIMER4_1MS_PERIOD_VAL >> 8) & 0xFFU));
+    
+    // 配置Timer4控制寄存器0
+    // TMR4_PRESCALE_SEL(0x5) : 预分频选择为32分频
+    // TMR4_SOURCE_SEL(0x7)   : 计数源选择为系统时钟
+    // TMR4_MODE_SEL(0x0)     : 选择计数模式
     TMR4_CON0 = TMR4_PRESCALE_SEL(0x5) |
-                TMR4_SOURCE_SEL(0x7) |
+                TMR4_SOURCE_SEL(0x7)   |
                 TMR4_MODE_SEL(0x0);
-    TMR4_IE0 = TMR4_PRD_IRQ_EN(0x1);
-    TMR4_EN = TMR4_EN(0x1);
+                
+    TMR4_IE0 = TMR4_PRD_IRQ_EN(0x1);                   // 使能计数值等于周期值中断
+    
+    TMR4_EN = TMR4_EN(0x1);                            // 使能定时器4
 }
 
 
@@ -30,7 +49,6 @@ void timer_isr_tick_1ms(void)
     if(s_tick_10ms_count >= TASK_10MS)
     {
         s_tick_10ms_count = 0U;
-        flg_10ms = 1;
     }
 }
 

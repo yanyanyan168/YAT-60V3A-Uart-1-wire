@@ -54,11 +54,9 @@ void save_cal_data(void);
 void usr_cal_func(void);
 
 u16 cal_current_to_duty(u16 current_ma);
-u16 cal_voltage_to_duty(u16 voltage_mv);
 u16 cal_Vout(void);
 u16 cal_Curr(void);
 
 #define SET_CURR(x_ma)                     cal_current_to_duty((u16)(x_ma))
-#define SET_VOL(x_mv)                      cal_voltage_to_duty((u16)(x_mv))
 
 #endif

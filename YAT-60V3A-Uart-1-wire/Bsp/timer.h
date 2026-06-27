@@ -9,7 +9,6 @@
 
 #include "common.h"
 
-extern bit flg_10ms;
 extern volatile u16 idata g_sys_tick_ms;
 
 void timer_init(void);

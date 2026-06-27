@@ -76,6 +76,7 @@ u8 common_sum_u8(u8 *buf, u8 len);
 extern FLAG_Types idata ch_flag;
 extern TIMER_Types idata Tim;
 extern u8 idata data_len_bk;
+extern u16 data next_10ms;
 
 void ch_err_ck(void);
 void TimCut(void);
