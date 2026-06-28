@@ -968,3 +968,237 @@ CodeGraph 只能作为辅助索引，不能替代源码复核。
 先用 CodeGraph 看清战场，再用 Codex 修改代码；CodeGraph 负责找关系，Codex 负责分析和改代码，最终仍以源码和 git diff 为准。
 ```
 
+---
+
+# 26. 小范围修改的高效执行规则
+
+本章节适用于所有“只改一个函数、只删一个 helper、只补一个判断、只改一个宏”的小任务。
+
+## 26.1 先限定范围，再动代码
+
+小范围任务禁止直接全文件搜索替换。
+
+必须先确认：
+
+1. 目标文件；
+2. 目标函数；
+3. 目标函数起止边界；
+4. 同名 case、同名宏、同名变量是否也出现在其他函数里。
+
+例如同一个 `case U1W_CMD_A0:` 可能同时出现在：
+
+1. `u1w_reply_len()`；
+2. `u1w_parse_frame()`；
+3. 调试打印函数；
+4. 其他协议辅助函数。
+
+如果任务只要求改 `u1w_parse_frame()`，就只能在这个函数范围内改，不能全文件按 `case U1W_CMD_A0:` 插入或替换。
+
+## 26.2 禁止低效命令堆叠
+
+小改动不允许为了显得“做了很多”而反复跑无关命令。
+
+推荐最小流程：
+
+```text
+1. git status / show_changes，看当前工作区和目标文件 diff；
+2. 读取目标函数片段；
+3. 做编码预检；
+4. 只改目标函数或目标小块；
+5. 复读目标函数片段；
+6. 搜索旧符号确认没有残留；
+7. 运行必要编译；
+8. 输出简短报告。
+```
+
+如果中间发现命令方式不适合，例如 UTF-8 apply_patch 不能处理 CP936 文件，应立即切换到保编码方式，不要反复尝试可能破坏编码的方法。
+
+## 26.3 CP936 / GBK 老工程写入规则
+
+如果预检发现 `.c/.h/.txt/.md` 等文件是 CP936 / GBK / ANSI：
+
+1. 不要用默认 UTF-8 方式直接写；
+2. 不要整文件转码；
+3. 不要为了修改一小块而重写整文件；
+4. 应使用保留原编码、原 BOM、原行尾的精确替换或按行修改；
+5. 写入后必须复查编码、BOM、行尾。
+
+如果无法确认保编码写入，必须停止并给人工补丁。
+
+## 26.4 计划外问题处理规则
+
+执行 current-plan.md 时，如果发现计划外 BUG、可疑问题、顺手优化点：
+
+1. 不允许自己修改；
+2. 只允许记录到 `.ai-bridge/agent-status.md` 的 `Found but not changed`；
+3. 停下来等 ChatGPT Pro / 用户确认；
+4. 等 ChatGPT Pro 给出具体最小改法后才能继续。
+
+禁止“顺手修一下”。
+
+## 26.5 交付 diff 规则
+
+`implementation-diff.patch` 必须对应本轮任务。
+
+如果本轮只改了一个文件，patch 就只应包含这个文件和必要的状态文件。禁止把旧任务的大 diff、历史 `ch.c` diff、无关日志文件混入本轮 patch。
+
+生成 patch 前必须确认：
+
+```text
+1. 本轮实际改了哪些文件；
+2. 哪些是历史未提交改动；
+3. 哪些不属于本轮；
+4. implementation-diff.patch 是否只包含本轮相关内容。
+```
+
+## 26.6 报告规则
+
+最终报告只写结论，不贴流水账。
+
+必须包含：
+
+1. 改了哪些文件；
+2. 没改哪些禁止文件；
+3. 核心逻辑是否满足计划；
+4. 编译结果；
+5. Program Size；
+6. 回退方式；
+7. 计划外问题是否有记录。
+
+不要把每一条命令过程都复制给用户，除非用户要求排查过程。
+
+---
+
+# 27. GBK/CP936 中文源码读取与保编码修改技能
+
+本技能适用于 Keil C51 老工程中的 `.c/.h/.txt/.md/.ini/.uvproj` 等文本文件，特别是含中文注释、中文串口日志、GBK/ANSI 编码的文件。
+
+## 27.1 先判断编码，不要默认 UTF-8
+
+读取中文乱码时，不要立刻认为源码乱码。
+
+必须先做编码判断：
+
+```text
+1. 读取原始 bytes；
+2. 依次尝试 utf-8-sig、utf-8、gbk、cp936；
+3. 哪个能完整 decode，就记录为原编码；
+4. 如果 UTF-8 读取显示乱码，但 GBK/CP936 正常，说明文件本身没坏，是读取方式错了。
+```
+
+推荐检查命令：
+
+```text
+PYTHONIOENCODING=utf-8 python -c "from pathlib import Path
+for f in ['App/usr_cfg.h','App/ch.c','App/uart_1_wire.c']:
+    b=Path(f).read_bytes()
+    ok=[]
+    for enc in ['utf-8-sig','utf-8','gbk','cp936']:
+        try:
+            b.decode(enc)
+            ok.append(enc)
+        except Exception:
+            pass
+    print(f, ok, 'bytes', len(b))"
+```
+
+## 27.2 GBK 文件读取中文时，要同时指定输出编码
+
+在 Windows / MSYS / Codex 工具中，即使 Python 已经用 GBK 正确 decode，如果控制台输出编码不对，显示仍可能乱码。
+
+读取 GBK 中文源码时，推荐使用：
+
+```text
+PYTHONIOENCODING=utf-8 python -c "from pathlib import Path
+p=Path('App/ch.c')
+lines=p.read_bytes().decode('gbk', errors='replace').splitlines()
+for i in range(1, 80):
+    print(f'{i:4d} | {lines[i-1]}')"
+```
+
+关键点：
+
+```text
+1. 文件 decode 用 gbk/cp936；
+2. 控制台输出用 PYTHONIOENCODING=utf-8；
+3. 不要用默认 read 工具的 UTF-8 结果判断中文是否损坏。
+```
+
+## 27.3 修改 GBK 文件必须保留三件事
+
+修改前必须记录：
+
+```text
+1. 原编码：GBK/CP936/ANSI/UTF-8/UTF-8-SIG；
+2. 原 BOM：有 / 无；
+3. 原行尾：CRLF / LF。
+```
+
+修改后必须保证：
+
+```text
+1. 写回相同编码；
+2. 写回相同行尾；
+3. 不新增或删除 BOM；
+4. 不整文件转码；
+5. 不批量格式化。
+```
+
+对于 GBK 文件，推荐做法是：
+
+```text
+b = path.read_bytes()
+text = b.decode('gbk')
+text = text.replace(old, new, 1)
+path.write_bytes(text.encode('gbk'))
+```
+
+禁止做法：
+
+```text
+path.write_text(text, encoding='utf-8')
+```
+
+## 27.4 修改后必须复查中文和编码
+
+修改后至少检查：
+
+```text
+1. 用 GBK/CP936 能否重新 decode；
+2. 文件是否仍然无 BOM / 原 BOM；
+3. 行尾是否仍为 CRLF；
+4. 中文注释和中文日志是否能按 GBK 正常显示；
+5. git diff 是否只包含计划内小范围修改。
+```
+
+## 27.5 处理 Keil C51 中文字符串里的 0xFD 风险
+
+部分 GBK 汉字本身含 `0xFD` 字节，例如：
+
+```text
+待 = B4 FD
+过 = B9 FD
+数 = CA FD
+```
+
+如果运行时串口日志中遇到这类字，可能被历史代码用 `\xFD` 规避，但这会导致日志里多出异常字节。
+
+优先方案不是硬塞 `\xFD`，而是换词避开这些字：
+
+```text
+等待BMS握手 -> 等BMS握手
+过压保护   -> 高压保护
+过温保护   -> 高温保护
+过流保护   -> 电流保护
+过流恢复   -> 电流恢复
+放大倍数   -> GAIN
+```
+
+中文注释可以保留这些字；运行时字符串尽量避开含 `0xFD` 的汉字。
+
+## 27.6 一句话原则
+
+```text
+先用 bytes 判断编码，再用正确编码读中文；改 GBK 文件必须 GBK 写回，不能默认 UTF-8。
+```
+

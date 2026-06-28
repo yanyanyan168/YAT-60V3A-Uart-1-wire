@@ -47,7 +47,7 @@ typedef enum
 {
     CH_IDLE = 0U,
     CH_Check,
-    BMS_HANDSHAKE,   /* 等待BMS握手成功：等待A0/A1/A4/A6/A7完成，输出关闭 */
+    BMS_HANDSHAKE,   /* 等BMS握手成功：等待A0/A1/A4/A6/A7/B1/B3/B4收齐，输出关闭 */
     CH_Pre1,
     CH_CCCV,
     CH_FULL,

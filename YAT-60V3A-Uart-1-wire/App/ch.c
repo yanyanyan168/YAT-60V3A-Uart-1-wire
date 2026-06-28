@@ -4,7 +4,7 @@
   * @brief   Ö÷³äµçÁ÷³Ì¡£
   *
   * ËµÃ÷£º
-  * 1. ±¾ÎÄ¼ş°´ 54.6V2.5A µÄ×´Ì¬»ú·ç¸ñ´î½¨£¬¸ºÔğ³äµç×´Ì¬Á÷×ªºÍÊä³ö¿ØÖÆ¡£
+  * 1. ±¾ÎÄ¼ş°´ 60V3A/63V ÏîÄ¿ĞèÇóÊµÏÖ£¬¸ºÔğ³äµç×´Ì¬Á÷×ªºÍÊä³ö¿ØÖÆ¡£
   * 2. P30 Ò»ÏßÍ¨ĞÅĞ­ÒéÔÚ uart_1_wire.c/.h ÖĞÊµÏÖ£¬±¾ÎÄ¼şÖ»¶ÁÈ¡Ä¿±êµçÑ¹¡¢µçÁ÷¡¢BMS×´Ì¬¡£
   * 3. Ã¿´Î×´Ì¬±ä»¯±ØĞë´òÓ¡ÖĞÎÄÈÕÖ¾£¬±ãÓÚ DEBUG ´®¿ÚÏÖ³¡ÅĞ¶ÏÁ÷³Ì×ßÏò¡£
   * 4. µçÑ¹¡¢µçÁ÷ºÍ¼ÆÊ±ãĞÖµÍ³Ò»À´×Ô usr_cfg.h£¬²»ÔÚÁ÷³ÌÖĞÉ¢ÂäÓ²±àÂë¡£
@@ -12,7 +12,7 @@
   * Í¨ĞÅ´¦Àí±ß½ç£º
   * 1. BMS_HANDSHAKE µÈ´ı A0/A1/A4/A6/A7/B1/B3/B4 È«²¿ÊÕÆë¡£
   * 2. ³äµçÏà¹Ø×´Ì¬Ö»¼ì²éÍ¨ĞÅ³¬Ê±£¬²»½âÎöĞ­ÒéÖ¡Ï¸½Ú¡£
-  * 3. B6 ÓÉĞ­Òé²ãÔÚ³äµç½×¶Î¹Ì¶¨ÒªÇó´ò¿ª³äµç MOS£»BMSÆÕÍ¨Òì³£ÓÉBMS×ÔÉí´¦Àí¡£
+  * 3. B6 ÓÉĞ­Òé²ãÔÚ³äµç½×¶Î¹Ì¶¨ÒªÇó´ò¿ª³äµç MOS£»BMS×´Ì¬ÓÉ±¾ÎÄ¼ş·ÖÀà´¦Àí¡£
   * 4. Âúµç/ÆÕÍ¨Òì³£ÓÉĞ­Òé²ãÖ÷¶¯À­µÍ COM£»BMSÎÂ¶ÈÒì³£¼ÌĞøÍ¨ĞÅ¼ì²é»Ö¸´¡£
   * 5. °Îµç³ØÈ«¾Ö´¦Àí£º¼ÌµçÆ÷±ÕºÏÊ±ÓÃ¡°Ğ¡µçÁ÷+ÎŞÍ¨ĞÅ¡±£¬Êä³ö¹Ø±ÕÊ±ÓÃµçÑ¹¼ì²â¡£
   ******************************************************************************
@@ -32,11 +32,11 @@ CH_STATUS_Types idata ch_state;
 CH_STATUS_Types idata last_state;
 
 static u8 idata s_cut[4];          /* ×´Ì¬ÄÚÈ·ÈÏ¼ÆÊı£¬·ÀÖ¹ÁÙ½çµã¶¶¶¯¡£ */
-static UART_1WIRE_CHARGE_INFO_Types idata s_u1w_info;  /* Ò»ÏßÍ¨ĞÅ¸ø³äµçÁ÷³ÌµÄ×´Ì¬¿ìÕÕ¡£ */
 
 static u16 idata s_cccv_curr_limit_ma;        /* CCCV Êµ¼ÊÏŞÁ÷µçÁ÷£¬µ¥Î» mA¡£ */
 static u8  idata s_cccv_derate_cnt;           /* CCCV ½µÁ÷¼ä¸ô¼ÆÊı¡£ */
 static u8  idata s_remove_cnt;                /* °Îµç³ØÈ·ÈÏ¼ÆÊı¡£ */
+static u16 idata s_idle_low_last_mv;          /* ´ı»úµÍÑ¹ºòÑ¡ÉÏ´ÎµçÑ¹¡£ */
 static u16 idata s_vout_probe_period_10ms;    /* Âúµç/Òì³£Ê±·ÖÑ¹¼ì²â¼ä¸ô¼ÆÊı¡£ */
 static u8  idata s_vout_probe_on_10ms;        /* Âúµç/Òì³£Ê±·ÖÑ¹¼ì²â¿ª´°¼ÆÊı¡£ */
 static bit s_vout_sample_valid;               /* ±¾ÖÜÆÚ val.vout ÊÇ·ñÔÊĞíÓÃÓÚÅĞ¶Ï¡£ */
@@ -46,6 +46,7 @@ static bit s_vout_sample_valid;               /* ±¾ÖÜÆÚ val.vout ÊÇ·ñÔÊĞíÓÃÓÚÅĞ¶
 #define CH_VOUT_PROBE_ON_10MS        (10U)    /* Ã¿´Î´ò¿ª100ms */
 #define CH_VOUT_PROBE_VALID_10MS     (5U)     /* ´ò¿ª50msºóÈÏÎªADCÓĞĞ§ */
 #define CH_BMS_TEMP_MASK             (U1W_B4_LOW_TEMP | U1W_B4_HIGH_TEMP | U1W_B4_MOS_HOT)
+#define CH_BMS_ERR_MASK              (U1W_B4_OCP | U1W_B4_SHORT | U1W_B4_TIMEOUT | U1W_B4_FAIL)
 
 /*
  * ×´Ì¬Ãû±í£º
@@ -57,14 +58,14 @@ static char * code s_ch_state_name[] =
 {
     "¿ÕÔØ",
     "¼ì²â",
-    "µÈ´ı\xFD" "BMSÎÕÊÖ",
+    "µÈBMSÎÕÊÖ",
     "Ô¤³ä",
     "ºãÁ÷ºãÑ¹",
     "Âúµç",
-    "¹ı\xFDÑ¹±£»¤",
+    "¸ßÑ¹±£»¤",
     "Ô¤³ä³¬Ê±",
-    "¹ı\xFDÎÂ±£»¤",
-    "¹ı\xFDÁ÷±£»¤",
+    "¸ßÎÂ±£»¤",
+    "µçÁ÷±£»¤",
     "NTCÒì³£",
     "Ó²¼şÒì³£",
     "Ç·Ñ¹±£»¤",
@@ -115,24 +116,6 @@ static void ch_set_state(CH_STATUS_Types next_state, char *reason)
                 (s16)val.i_ntc);
 
     ch_state = next_state;
-}
-
-/**
-  * @brief  ÅĞ¶ÏÊÇ·ñÈÔÓĞ³äµçÆ÷Ó²¼ş±£»¤±êÖ¾Î´»Ö¸´¡£
-  */
-static bit ch_fault_flag_active(void)
-{
-    if((ch_flag.ch_ntcErr != 0) ||
-       (ch_flag.ch_hotErr != 0) ||
-       (ch_flag.ch_ovp != 0) ||
-       (ch_flag.ch_ocp != 0) ||
-       (ch_flag.ch_vacErr != 0) ||
-       (ch_flag.ch_hard != 0))
-    {
-        return 1;
-    }
-
-    return 0;
 }
 
 /**
@@ -508,8 +491,29 @@ static void ch_output_all_off(void)
   */
 static bit ch_bms_temp_fault_active(void)
 {
-    if((s_u1w_info.charge_status & CH_BMS_TEMP_MASK) != 0U)
+    if((u1w_info.charge_status & CH_BMS_TEMP_MASK) != 0U)
     {
+        return 1;
+    }
+
+    return 0;
+}
+
+static bit ch_bms_status_check(void)
+{
+    if((u1w_info.charge_status & CH_BMS_ERR_MASK) != 0U)
+    {
+        ch_set_state(BMS_ERR, "BMSÒì³£");
+        return 1;
+    }
+    if(ch_bms_temp_fault_active() != 0)
+    {
+        ch_set_state(BMS_TEMP_ERR, "BMSÎÂ¶ÈÒì³£");
+        return 1;
+    }
+    if((u1w_info.charge_status & U1W_B4_OV) != 0U)
+    {
+        ch_set_state(CH_FULL, "BMSÂúµç");
         return 1;
     }
 
@@ -625,7 +629,7 @@ static void ch_prepare_vout_sample_10ms(void)
 
 /**
   * @brief  ³ı´ı»úÍâ£¬È«¾ÖÅĞ¶Ïµç³ØÊÇ·ñ°Î³ö¡£
-  * @return 1 ±íÊ¾ÒÑ¾­È·ÈÏ°Î³ö²¢»Øµ½´ı»ú¡£
+  * @return 1 ±íÊ¾±¾ÖÜÆÚÓÉ°Î³ı¼ì²â½Ó¹Ü¡£
   */
 static bit ch_battery_removed_check_10ms(void)
 {
@@ -641,23 +645,33 @@ static bit ch_battery_removed_check_10ms(void)
     {
         /*
          * ¼ÌµçÆ÷±ÕºÏÊ±£¬val.vout ¿ÉÄÜÊÇ³äµçÆ÷×ÔÉíÊä³ö£¬²»ÄÜ×÷Îª°Îµç³ØÒÀ¾İ¡£
-         * Ê¹ÓÃ¡°Ğ¡µçÁ÷ + 1ÃëÎŞºÏ·¨Í¨ĞÅÖ¡¡±ÅĞ¶Ï¡£
+         * 1ÃëÎŞºÏ·¨Í¨ĞÅÖ¡ÇÒµçÁ÷Ğ¡ÓÚÂúµçµçÁ÷ºó£¬ÏÈ¹ØÊä³ö£¬Ô¼20msºóÔÙ¿´µç³Ø¶ËµçÑ¹¡£
          */
-        if((val.curr < (u16)(iGED / 2U)) && (s_u1w_info.no_rx_10ms >= 100U))
+        if(s_remove_cnt != 0U)
         {
-            if(++s_remove_cnt >= 10U)
+            ch_output_all_off();
+            if(++s_remove_cnt >= 3U)
             {
-                ch_output_all_off();
-                BATT_DIVIDER_EN = 0;
-                uart_1_wire_reset_link();
-                ch_vout_probe_reset();
-                ch_set_state(CH_IDLE, "°Îµç³Ø");
+                if(val.vout < vRESET)
+                {
+                    BATT_DIVIDER_EN = 0;
+                    uart_1_wire_reset_link();
+                    ch_vout_probe_reset();
+                    ch_set_state(CH_IDLE, "°Îµç³Ø");
+                    return 1;
+                }
+                s_remove_cnt = 0U;
+                ch_set_state(BMS_ERR, "°Î³ıÒì³£");
                 return 1;
             }
+            return 1;
         }
-        else
+
+        if((val.curr < iGED) && (u1w_info.no_rx_10ms >= 100U))
         {
-            s_remove_cnt = 0U;
+            ch_output_all_off();
+            s_remove_cnt = 1U;
+            return 1;
         }
         return 0;
     }
@@ -770,7 +784,6 @@ void usr_ch_func(void)
             }
             uart_1_wire_set_stage(u1w_stage);
             uart_1_wire_poll_10ms();
-            uart_1_wire_get_info(&s_u1w_info);
 
             /* ÏÈ°´µ±Ç°×´Ì¬×¼±¸µçÑ¹²ÉÑùÊ¹ÄÜ£¬ÔÙ¸üĞÂADC¹¤³ÌÁ¿¡£ */
             ch_prepare_vout_sample_10ms();
@@ -790,20 +803,17 @@ void usr_ch_func(void)
                 continue;
             }
 
-            target_voltage_mv = s_u1w_info.target_voltage_mv;
+            target_voltage_mv = u1w_info.target_voltage_mv;
             if(target_voltage_mv > SET_vMAX)
             {
                 target_voltage_mv = SET_vMAX;
             }
 
-            target_current_ma = s_u1w_info.target_current_ma;
+            target_current_ma = u1w_info.target_current_ma;
             if(target_current_ma > iMAX)
             {
                 target_current_ma = iMAX;
             }
-            pre_end_voltage_mv = ch_get_pre_end_voltage_mv();
-            cccv_timeout_min = ch_get_cccv_timeout_min(target_current_ma);
-            
             if(last_state != ch_state)
             {
                 last_state = ch_state;
@@ -833,8 +843,8 @@ void usr_ch_func(void)
                 /*
                  * ¿ÕÔØ/´ı»ú£º
                  * - ¼ÌµçÆ÷¡¢VADJ¡¢PWM¡¢·çÉÈÈ«²¿¹Ø±Õ£»
-                 * - µÈ´ıµç³ØµçÑ¹³¬¹ıÆğ³äãĞÖµ£»
-                 * - ¼ì²âµ½µç³ØºóÖØĞÂ´ÓA0¿ªÊ¼ÎÕÊÖ£¬²¢½øÈëBMSÎÕÊÖµÈ´ı×´Ì¬¡£
+                 * - µçÑ¹³¬¹ıÆğ³äãĞÖµºó½øÈëBMSÎÕÊÖ£»
+                 * - 1V~15V ĞèÎÈ¶¨È·ÈÏ£¬±ÜÃâ²ĞÑ¹»ò²åÈëË²Ì¬ÎóÅĞµÍÑ¹¡£
                  */
                 ch_output_all_off();
                 RLED = 1;
@@ -842,15 +852,48 @@ void usr_ch_func(void)
                 BATT_DIVIDER_EN = 1;          /* ´ò¿ªµç³Ø·ÖÑ¹£¬±£Ö¤ AIN3 ²ÉÑùÓĞĞ§¡£ */
                 if(val.vout >= vSTART)
                 {
+                    s_cut[1] = 0U;
+                    s_idle_low_last_mv = 0U;
                     if(++s_cut[0] >= 50U)
                     {
                         uart_1_wire_reset_link();
                         ch_set_state(BMS_HANDSHAKE, "²åµç³Ø");
                     }
                 }
+                else if(val.vout > vRESET)
+                {
+                    s_cut[0] = 0U;
+                    if(s_cut[1] == 0U)
+                    {
+                        s_idle_low_last_mv = val.vout;
+                        s_cut[1] = 1U;
+                    }
+                    else
+                    {
+                        if(((val.vout > s_idle_low_last_mv) &&
+                            ((u16)(val.vout - s_idle_low_last_mv) > 100U)) ||
+                           ((s_idle_low_last_mv > val.vout) &&
+                            ((u16)(s_idle_low_last_mv - val.vout) > 100U)))
+                        {
+                            s_cut[1] = 1U;
+                        }
+                        else if(s_cut[1] < 200U)
+                        {
+                            s_cut[1]++;
+                        }
+
+                        s_idle_low_last_mv = val.vout;
+                        if(s_cut[1] >= 200U)
+                        {
+                            ch_set_state(CH_UVP, "µç³ØµÍÑ¹");
+                        }
+                    }
+                }
                 else
                 {
-                    s_cut[0] = 0;
+                    s_cut[0] = 0U;
+                    s_cut[1] = 0U;
+                    s_idle_low_last_mv = 0U;
                 }
                 break;
 
@@ -882,11 +925,11 @@ void usr_ch_func(void)
                 {
                     s_cut[0] = 0U;
 
-                    if(s_u1w_info.comm_timeout != 0U)
+                    if(u1w_info.comm_timeout != 0U)
                     {
                         ch_set_state(BMS_ERR, "BMSÍ¨ĞÅ³¬Ê±");
                     }
-                    else if(s_u1w_info.handshake_ok != 0U)
+                    else if(u1w_info.handshake_ok != 0U)
                     {
                         ch_set_state(CH_Check, "ÎÕÊÖ³É¹¦");
                     }
@@ -923,16 +966,17 @@ void usr_ch_func(void)
                      * ±ÜÃâÇ°ÃæÁÙ½ç²¨¶¯ÀÛ¼ÆµÄs_cut[0]²ĞÁô£¬ºóĞøÔÙ´Î²¨¶¯Ê±Îó½øÇ·Ñ¹¡£
                      */
                     s_cut[0] = 0U;
+                    pre_end_voltage_mv = ch_get_pre_end_voltage_mv();
 
-                    if(s_u1w_info.comm_timeout != 0U)
+                    if(u1w_info.comm_timeout != 0U)
                     {
                         ch_set_state(BMS_ERR, "BMSÍ¨ĞÅ³¬Ê±");
                     }
-                    else if(ch_bms_temp_fault_active() != 0)
+                    else if(ch_bms_status_check() != 0)
                     {
-                        ch_set_state(BMS_TEMP_ERR, "BMSÎÂ¶ÈÒì³£");
+                        /* ×´Ì¬ÒÑÇĞ»»¡£ */
                     }
-                    else if(s_u1w_info.handshake_ok == 0U)
+                    else if(u1w_info.handshake_ok == 0U)
                     {
                         uart_1_wire_reset_link();
                         ch_set_state(BMS_HANDSHAKE, "µÈÎÕÊÖ");
@@ -959,14 +1003,13 @@ void usr_ch_func(void)
                  * - µçÁ÷Ê¹ÓÃ iREPAIR£¬±£³ÖĞ¡µçÁ÷ĞŞ¸´£»
                  * - µ½ vPRE_30V ºó×ªÈëÔ¤³ä£¬³¬Ê±½øÈëÔ¤³ä³¬Ê±Òì³£¡£
                  */
-                if(s_u1w_info.comm_timeout != 0U)
+                if(u1w_info.comm_timeout != 0U)
                 {
                     ch_set_state(BMS_ERR, "BMSÍ¨ĞÅ³¬Ê±");
                     break;
                 }
-                if(ch_bms_temp_fault_active() != 0)
+                if(ch_bms_status_check() != 0)
                 {
-                    ch_set_state(BMS_TEMP_ERR, "BMSÎÂ¶ÈÒì³£");
                     break;
                 }
                 DCJK = 0;
@@ -1001,22 +1044,21 @@ void usr_ch_func(void)
                 /*
                  * Ô¤³ä£º
                  * - Õı³£Ô¤³äÊ±³ÖĞø¼ì²éÍ¨ĞÅ³¬Ê±£»
-                 * - B4 ×´Ì¬Î»Ö»¼ÇÂ¼£¬BMS ×Ô¼º´¦Àí×ÔÉíÒì³£¡£
+                 * - B4 ×´Ì¬Î»°´Âúµç¡¢ÎÂ¶ÈÒì³£¡¢ÆÕÍ¨Òì³£·ÖÀà´¦Àí¡£
                  */
-                if(s_u1w_info.comm_timeout != 0U)
+                if(u1w_info.comm_timeout != 0U)
                 {
                     ch_set_state(BMS_ERR, "BMSÍ¨ĞÅ³¬Ê±");
                     break;
                 }
-                if(ch_bms_temp_fault_active() != 0)
+                if(ch_bms_status_check() != 0)
                 {
-                    ch_set_state(BMS_TEMP_ERR, "BMSÎÂ¶ÈÒì³£");
                     break;
                 }
 
                 /*
                  * Òì²½Í¨ĞÅ°æÖ»ÔÚÕâÀï´¦ÀíÍ¨ĞÅ³¬Ê±¡£
-                 * B4 ×´Ì¬Î»Ö»¼ÇÂ¼£¬BMS ×ÔÉíÒì³£ÓÉ BMS ×Ô¼º´¦Àí MOS¡£
+                 * B4 ×´Ì¬Î»°´Âúµç¡¢ÎÂ¶ÈÒì³£¡¢ÆÕÍ¨Òì³£·ÖÀà´¦Àí¡£
                  */
                 DCJK = 1;
                 REPAIR_OUTPUT = 0;
@@ -1025,6 +1067,7 @@ void usr_ch_func(void)
                 Ged_Flash(50);
                 TimCut();
                 set_Curr_Duty(SET_CURR(iPRE));
+                pre_end_voltage_mv = ch_get_pre_end_voltage_mv();
 
                 if(Tim.min >= TIM_PRE)
                 {
@@ -1048,22 +1091,21 @@ void usr_ch_func(void)
                  * ºãÁ÷ºãÑ¹£º
                  * - °´Ğ­ÒéÄ¿±êµçÑ¹/µçÁ÷ÉèÖÃPWM£»
                  * - ÂúµçÅĞ¶ÏÊ¹ÓÃĞ­ÒéÄ¿±êµçÑ¹£¬¶ø²»ÊÇ¹Ì¶¨SET_vMAX£»
-                 * - ³äµçÖĞ³ÖĞø¼ì²éÍ¨ĞÅ³¬Ê±£»B4 ×´Ì¬Î»Ö»¼ÇÂ¼¡£
+                 * - ³äµçÖĞ³ÖĞø¼ì²éÍ¨ĞÅ³¬Ê±ºÍB4×´Ì¬¡£
                  */
-                if(s_u1w_info.comm_timeout != 0U)
+                if(u1w_info.comm_timeout != 0U)
                 {
                     ch_set_state(BMS_ERR, "BMSÍ¨ĞÅ³¬Ê±");
                     break;
                 }
-                if(ch_bms_temp_fault_active() != 0)
+                if(ch_bms_status_check() != 0)
                 {
-                    ch_set_state(BMS_TEMP_ERR, "BMSÎÂ¶ÈÒì³£");
                     break;
                 }
 
                 /*
                  * Òì²½Í¨ĞÅ°æÖ»ÔÚÕâÀï´¦ÀíÍ¨ĞÅ³¬Ê±¡£
-                 * B4 ×´Ì¬Î»Ö»¼ÇÂ¼£¬BMS ×ÔÉíÒì³£ÓÉ BMS ×Ô¼º´¦Àí MOS¡£
+                 * B4 ×´Ì¬Î»°´Âúµç¡¢ÎÂ¶ÈÒì³£¡¢ÆÕÍ¨Òì³£·ÖÀà´¦Àí¡£
                  */
                 DCJK = 1;
                 REPAIR_OUTPUT = 0;
@@ -1079,6 +1121,7 @@ void usr_ch_func(void)
                  */
                 target_current_ma = ch_get_cccv_work_current_ma(target_current_ma);
                 set_Curr_Duty(SET_CURR(target_current_ma));
+                cccv_timeout_min = ch_get_cccv_timeout_min(target_current_ma);
 
                 if(Tim.min >= cccv_timeout_min)
                 {
@@ -1102,7 +1145,7 @@ void usr_ch_func(void)
                  * Âúµç£º
                  * - Í£Ö¹Êä³ö²¢µãÁÁÂÌµÆ£»
                  * - °´Ğ­Òé·¢ËÍ B6 03 SOC£¬3·ÖÖÓºóÓÉÍ¨ĞÅ²ãÖ÷¶¯À­µÍCOM£»
-                 * - ·ÖÑ¹¼ì²âÄ¬ÈÏ¹Ø±Õ£¬Ö»ÔÚ¼ì²â´°¿ÚÓĞĞ§Ê±ÅĞ¶Ï»Ø³ä¡£
+                 * - FULL_DISPLAY ²»ÔÙÂÖÑ¯B1£¬»Ø³äÔİÓÃÕû°ü vCH60 ½üËÆÅĞ¶Ï¡£
                  */
                 ch_output_all_off();
                 RLED = 0;
@@ -1130,9 +1173,13 @@ void usr_ch_func(void)
                  */
                 ch_output_all_off();
                 RGed_Flash(50);
-                if(s_u1w_info.comm_timeout != 0U)
+                if(u1w_info.comm_timeout != 0U)
                 {
                     ch_set_state(BMS_ERR, "ÎÂ¶ÈµÈ´ıÍ¨ĞÅ³¬Ê±");
+                }
+                else if((u1w_info.charge_status & CH_BMS_ERR_MASK) != 0U)
+                {
+                    ch_set_state(BMS_ERR, "BMSÒì³£");
                 }
                 else if(ch_bms_temp_fault_active() == 0)
                 {

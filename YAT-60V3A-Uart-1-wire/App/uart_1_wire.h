@@ -124,12 +124,13 @@ typedef struct
 } UART_1WIRE_CHARGE_INFO_Types;
 
 extern UART_1WIRE_INFO_Types xdata uart_1_wire;
+extern UART_1WIRE_CHARGE_INFO_Types idata u1w_info;
 
 void uart_1_wire_init(void);
 void uart_1_wire_reset_link(void);
 void uart_1_wire_set_stage(u8 stage);
 void uart_1_wire_poll_10ms(void);
 void uart_1_wire_task_10ms(void);           /* 兼容旧接口，等同于 poll_10ms */
-void uart_1_wire_get_info(UART_1WIRE_CHARGE_INFO_Types *info);
+
 
 #endif

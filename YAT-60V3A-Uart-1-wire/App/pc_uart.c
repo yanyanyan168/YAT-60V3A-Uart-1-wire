@@ -64,7 +64,7 @@ static void pc_uart_print_voltage_range_line(char *name, u16 low_mv, u16 high_mv
 }
 
 /**
-  * @brief  打印整机参数，保留 54.6V "par" 命令入口。
+  * @brief  打印整机参数，保留原调试口 "par" 命令入口。
   */
 static void pc_uart_print_param(void)
 {
@@ -76,7 +76,7 @@ static void pc_uart_print_param(void)
     pc_uart_print_current_line("恒流电流", iMAX);
     pc_uart_print_current_line("转灯电流", iGED);
     pc_uart_print_current_line("保护电流", iOCP);
-    pc_uart_print_current_line("过\xFD流恢复", iOCP_OK);
+    pc_uart_print_current_line("电流恢复", iOCP_OK);
 
     pc_uart_print_voltage_line("\n识别电压", vSTART);
     pc_uart_print_voltage_line("修复结束", vPRE_30V);
@@ -87,16 +87,16 @@ static void pc_uart_print_param(void)
     uart_printf("\n内部NTC:\n");
     uart_printf("高温关断 ADC>%u\n", T_HOT_ERR);
     uart_printf("高温恢复 ADC<%u\n", T_HOT_ERR_OK);
-    uart_printf("高温降额 ADC>%u\n", T_CH_HOT);
-    uart_printf("降额恢复 ADC<%u\n", T_CH_HOT_OK);
+    uart_printf("高温提示 ADC>%u\n", T_CH_HOT);
+    uart_printf("提示恢复 ADC<%u\n", T_CH_HOT_OK);
 
     uart_printf("\n预充定时 %umin\n", TIM_PRE);
-    uart_printf("CC+CV定时 %uh\n", TIM_CCCV);
+    uart_printf("CC+CV定时 %umin\n", TIM_CCCV);
 
     uart_printf("上拉电阻: %uk\n", (u16)R1);
     uart_printf("下拉电阻: %uk\n", (u16)R2);
     uart_printf("电流电阻: %umR\n", (u16)Ra);
-    uart_printf("放大倍数\xFD: %u\n", (u16)GAIN);
+    uart_printf("GAIN: %u\n", (u16)GAIN);
 
     uart_printf("\n状态:\n0空载\n1 检测\n2 握手\n3 预充\n4 CCCV\n5 满电\n6 OVP\n7 预超\n8 OTP\n");
     uart_printf("9 OCP\n10 NTC\n11 硬件\n12 欠压\n13 CV超时\n14 BMS温\n15 BMS异常\n16 修复\n17 老化\n");
