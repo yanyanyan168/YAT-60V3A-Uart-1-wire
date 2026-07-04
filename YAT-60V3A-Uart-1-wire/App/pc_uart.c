@@ -16,6 +16,7 @@
 #include "adc.h"
 #include "ch.h"
 #include "timer.h"
+#include "uart_1_wire.h"
 #include "stm32_crc.h"
 
 #define PC_UART_DATA_LEN                 (36U)
@@ -106,18 +107,34 @@ static void pc_uart_print_param(void)
 /**
   * @brief  打印当前采样和状态，便于 DEBUG 人工联调。
   */
-static void pc_uart_print_batt(void)
+void pc_uart_print_batt(void)
 {
-    uart_printf("[BATT] vout=%u mV, curr=%u mA, ntc=%d(0.1C)\r\n",
+    uart_printf("[电池] 输出电压=%u mV, 输出电流=%u mA, NTC=%d(0.1C)\r\n",
                 val.vout,
                 val.curr,
                 (s16)val.i_ntc);
-    uart_printf("[BATT] state=%bu, flag=%bu, tick=%u\r\n",
+    uart_printf("[电池] 充电状态=%bu, 故障标志=%bu, 时间=%u\r\n",
                 (u8)ch_state,
                 pc_uart_pack_flag(),
                 timer_get_tick_ms());
+    uart_printf("[BMS] 阶段=%bu, 握手=%bu, 超时=%bu, 超时命令=%bu\r\n",
+                u1w_info.stage,
+                u1w_info.handshake_ok,
+                u1w_info.comm_timeout,
+                u1w_info.key_timeout_cmd);
+    uart_printf("[BMS] 电池包=%bu串%bu并, 容量=%u(0.1Ah), 目标=%u mV/%u mA\r\n",
+                uart_1_wire.cell_series,
+                uart_1_wire.cell_parallel,
+                uart_1_wire.cell_cap_01ah,
+                u1w_info.target_voltage_mv,
+                u1w_info.target_current_ma);
+    uart_printf("[BMS] 单节最高=%u mV, 电量=%bu, 电池温度=%dC, MOS温度=%dC, 状态=%bu\r\n",
+                u1w_info.cell_max_mv,
+                u1w_info.soc_percent,
+                (s16)u1w_info.batt_temp_degc,
+                (s16)u1w_info.mos_temp_degc,
+                u1w_info.charge_status);
 }
-
 /**
   * @brief  写入 u16/u32 小端数据，保持 54.6V 原调试帧字节序。
   */

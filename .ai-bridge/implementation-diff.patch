@@ -1,0 +1,115 @@
+diff --git a/YAT-60V3A-Uart-1-wire/App/uart_1_wire.c b/YAT-60V3A-Uart-1-wire/App/uart_1_wire.c
+index 058d0d9..acca033 100644
+--- a/YAT-60V3A-Uart-1-wire/App/uart_1_wire.c
++++ b/YAT-60V3A-Uart-1-wire/App/uart_1_wire.c
+@@ -202,22 +202,6 @@ static u8 u1w_reply_len(u8 cmd)
+     }
+ }
+ 
+-static u8 u1w_key_index(u8 cmd)
+-{
+-    switch(cmd)
+-    {
+-    case U1W_CMD_A0: return U1W_KEY_A0;
+-    case U1W_CMD_A1: return U1W_KEY_A1;
+-    case U1W_CMD_A4: return U1W_KEY_A4;
+-    case U1W_CMD_A6: return U1W_KEY_A6;
+-    case U1W_CMD_A7: return U1W_KEY_A7;
+-    case U1W_CMD_B1: return U1W_KEY_B1;
+-    case U1W_CMD_B3: return U1W_KEY_B3;
+-    case U1W_CMD_B4: return U1W_KEY_B4;
+-    default:         return U1W_KEY_MAX;
+-    }
+-}
+-
+ static void u1w_refresh_target_current(void)
+ {
+     u16 target_ma;
+@@ -254,16 +238,12 @@ static void u1w_parse_frame(u8 *frame)
+     uart_1_wire.offline_count_10ms = 0U;
+     s_u1w.any_rx_age_10ms = 0U;
+ 
+-    key = u1w_key_index(cmd);
+-    if(key < U1W_KEY_MAX)
+-    {
+-        s_u1w.key_age_10ms[key] = 0U;
+-        uart_1_wire.handshake_mask |= (u8)(1U << key);
+-    }
++    key = U1W_KEY_MAX;
+ 
+     switch(cmd)
+     {
+     case U1W_CMD_A0:
++        key = U1W_KEY_A0;
+         /* A0 ZZ XY CHK：ZZ=识别码，X=串数编码，Y=并数编码。 */
+         uart_1_wire.pack_id = frame[1];
+         xy = frame[2];
+@@ -281,11 +261,13 @@ static void u1w_parse_frame(u8 *frame)
+         break;
+ 
+     case U1W_CMD_A1:
++        key = U1W_KEY_A1;
+         /* A1 XX YY CHK：YY=容量 0.1Ah。 */
+         uart_1_wire.cell_cap_01ah = frame[2];
+         break;
+ 
+     case U1W_CMD_A4:
++        key = U1W_KEY_A4;
+         /* A4 xxxx yyyy CHK：xxxx=预充截止，yyyy=满充，单位0.01V。 */
+         uart_1_wire.cell_pre_mv = u1w_001v_to_mv(u1w_get_u16_bus(frame[1], frame[2]));
+         pack_mv = (u32)u1w_001v_to_mv(u1w_get_u16_bus(frame[3], frame[4])) *
+@@ -298,6 +280,7 @@ static void u1w_parse_frame(u8 *frame)
+         break;
+ 
+     case U1W_CMD_A6:
++        key = U1W_KEY_A6;
+         /* A6 xxxx yyyy CHK：xxxx=单电芯最大充电电流0.1A。 */
+         uart_1_wire.max_charge_current_ma =
+             U1W_LIMIT_CURRENT(u1w_cell_01a_to_pack_ma(u1w_get_u16_bus(frame[1], frame[2])));
+@@ -305,6 +288,7 @@ static void u1w_parse_frame(u8 *frame)
+         break;
+ 
+     case U1W_CMD_A7:
++        key = U1W_KEY_A7;
+         /* A7 XX YY 00 ZZ CHK：XX/YY=二级温区，ZZ=单电芯二级电流0.1A。 */
+         uart_1_wire.derate_low_degc = (s8)frame[1];
+         uart_1_wire.derate_high_degc = (s8)frame[2];
+@@ -313,12 +297,14 @@ static void u1w_parse_frame(u8 *frame)
+         break;
+ 
+     case U1W_CMD_B1:
++        key = U1W_KEY_B1;
+         /* B1 xxxx yyyy CHK：xxxx=最低单节，yyyy=最高单节，单位0.01V。 */
+         uart_1_wire.cell_min_mv = u1w_001v_to_mv(u1w_get_u16_bus(frame[1], frame[2]));
+         uart_1_wire.cell_max_mv = u1w_001v_to_mv(u1w_get_u16_bus(frame[3], frame[4]));
+         break;
+ 
+     case U1W_CMD_B3:
++        key = U1W_KEY_B3;
+         /* B3 XX YY CHK：XX=电池温度，YY=充电 MOS 温度。 */
+         uart_1_wire.batt_temp_degc = (s8)frame[1];
+         uart_1_wire.mos_temp_degc = (s8)frame[2];
+@@ -326,6 +312,7 @@ static void u1w_parse_frame(u8 *frame)
+         break;
+ 
+     case U1W_CMD_B4:
++        key = U1W_KEY_B4;
+         /* B4 XX YY CHK：XX=SOC，YY=状态位。状态位只记录，不直接控制B6。 */
+         uart_1_wire.soc_percent = frame[1];
+         if(uart_1_wire.soc_percent > 100U)
+@@ -343,6 +330,15 @@ static void u1w_parse_frame(u8 *frame)
+         break;
+     }
+ 
++    if(key < U1W_KEY_MAX)
++    {
++        s_u1w.key_age_10ms[key] = 0U;
++        if(s_u1w.stage == U1W_STAGE_HANDSHAKE)
++        {
++            uart_1_wire.handshake_mask |= (u8)(1U << key);
++        }
++    }
++
+     if((uart_1_wire.handshake_mask & U1W_HANDSHAKE_MASK) == U1W_HANDSHAKE_MASK)
+     {
+         uart_1_wire.link_state = U1W_LINK_ONLINE;

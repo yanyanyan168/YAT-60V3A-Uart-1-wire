@@ -10,5 +10,6 @@
 #include "common.h"
 
 u8 pc_uart_func(void);
+void pc_uart_print_batt(void);
 
 #endif

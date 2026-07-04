@@ -105,6 +105,168 @@ static void u1w_dbg_put_bytes(u8 *buf, u8 len)
     }
 }
 
+#if (U1W_DEBUG_PARSE_EN != 0U)
+static void u1w_dbg_put_u16(u16 dat)
+{
+    char buf[5];
+    u8 i;
+    u8 started;
+
+    buf[0] = (char)('0' + (dat / 10000U));
+    dat %= 10000U;
+    buf[1] = (char)('0' + (dat / 1000U));
+    dat %= 1000U;
+    buf[2] = (char)('0' + (dat / 100U));
+    dat %= 100U;
+    buf[3] = (char)('0' + (dat / 10U));
+    buf[4] = (char)('0' + (dat % 10U));
+
+    started = 0U;
+    for(i = 0U; i < 5U; i++)
+    {
+        if((buf[i] != '0') || (started != 0U) || (i == 4U))
+        {
+            started = 1U;
+            u1w_dbg_put_char(buf[i]);
+        }
+    }
+}
+
+static void u1w_dbg_put_s8(s8 dat)
+{
+    if(dat < 0)
+    {
+        u1w_dbg_put_char('-');
+        dat = (s8)(0 - dat);
+    }
+    u1w_dbg_put_u16((u16)((u8)dat));
+}
+
+static void u1w_dbg_put_01a(u16 raw)
+{
+    u1w_dbg_put_u16((u16)(raw / 10U));
+    u1w_dbg_put_char('.');
+    u1w_dbg_put_char((char)('0' + (raw % 10U)));
+    u1w_dbg_put_char('A');
+}
+
+static u16 u1w_dbg_get_u16(u8 byte0, u8 byte1)
+{
+    return (u16)((u16)byte0 | ((u16)byte1 << 8));
+}
+
+static void u1w_dbg_put_parse(u8 *buf, u8 len)
+{
+    u8 cmd;
+    u8 xy;
+    u16 raw1;
+    u16 raw2;
+
+    if(len < 4U)
+    {
+        return;
+    }
+
+    cmd = buf[0];
+    switch(cmd)
+    {
+    case U1W_CMD_A0:
+        xy = buf[2];
+        u1w_dbg_put_str(" ID=0x");
+        u1w_dbg_put_hex8(buf[1]);
+        u1w_dbg_put_char(' ');
+        u1w_dbg_put_u16((u16)(((xy >> 4) & 0x0FU) + 5U));
+        u1w_dbg_put_char('S');
+        u1w_dbg_put_u16((u16)((xy & 0x0FU) + 1U));
+        u1w_dbg_put_char('P');
+        break;
+
+    case U1W_CMD_A1:
+        u1w_dbg_put_str(" CAP=");
+        u1w_dbg_put_u16((u16)(buf[2] / 10U));
+        u1w_dbg_put_char('.');
+        u1w_dbg_put_char((char)('0' + (buf[2] % 10U)));
+        u1w_dbg_put_str("Ah");
+        break;
+
+    case U1W_CMD_A4:
+        if(len >= 6U)
+        {
+            raw1 = u1w_dbg_get_u16(buf[1], buf[2]);
+            raw2 = u1w_dbg_get_u16(buf[3], buf[4]);
+            u1w_dbg_put_str(" PRE=");
+            u1w_dbg_put_u16((u16)(raw1 * 10U));
+            u1w_dbg_put_str("mV FULL=");
+            u1w_dbg_put_u16((u16)(raw2 * 10U));
+            u1w_dbg_put_str("mV");
+        }
+        break;
+
+    case U1W_CMD_A6:
+        if(len >= 6U)
+        {
+            raw1 = u1w_dbg_get_u16(buf[1], buf[2]);
+            raw2 = u1w_dbg_get_u16(buf[3], buf[4]);
+            u1w_dbg_put_str(" I_CELL=");
+            u1w_dbg_put_01a(raw1);
+            u1w_dbg_put_str(" RAW2=");
+            u1w_dbg_put_u16(raw2);
+        }
+        break;
+
+    case U1W_CMD_A7:
+        if(len >= 6U)
+        {
+            u1w_dbg_put_str(" T=");
+            u1w_dbg_put_s8((s8)buf[1]);
+            u1w_dbg_put_str("..");
+            u1w_dbg_put_s8((s8)buf[2]);
+            u1w_dbg_put_str("C DER=");
+            u1w_dbg_put_01a(buf[4]);
+        }
+        break;
+
+    case U1W_CMD_B1:
+        if(len >= 6U)
+        {
+            raw1 = u1w_dbg_get_u16(buf[1], buf[2]);
+            raw2 = u1w_dbg_get_u16(buf[3], buf[4]);
+            u1w_dbg_put_str(" MIN=");
+            u1w_dbg_put_u16((u16)(raw1 * 10U));
+            u1w_dbg_put_str("mV MAX=");
+            u1w_dbg_put_u16((u16)(raw2 * 10U));
+            u1w_dbg_put_str("mV");
+        }
+        break;
+
+    case U1W_CMD_B3:
+        u1w_dbg_put_str(" BAT=");
+        u1w_dbg_put_s8((s8)buf[1]);
+        u1w_dbg_put_str("C MOS_T=");
+        u1w_dbg_put_s8((s8)buf[2]);
+        u1w_dbg_put_char('C');
+        break;
+
+    case U1W_CMD_B4:
+        u1w_dbg_put_str(" SOC=");
+        u1w_dbg_put_u16(buf[1]);
+        u1w_dbg_put_str("% ST=0x");
+        u1w_dbg_put_hex8(buf[2]);
+        break;
+
+    case U1W_CMD_B6:
+        u1w_dbg_put_str(" TYPE=0x");
+        u1w_dbg_put_hex8(buf[1]);
+        u1w_dbg_put_str(" VAL=0x");
+        u1w_dbg_put_hex8(buf[2]);
+        break;
+
+    default:
+        break;
+    }
+}
+#endif
+
 /* 只缓存主机发送帧，当前发送帧最长按 4 字节处理。 */
 static void u1w_dbg_copy_tx(u8 *src, u8 len)
 {
@@ -167,6 +329,9 @@ void u1w_dbg_rx_ok(u8 *buf, u8 rx_len)
 
     u1w_dbg_put_str(" RX=");
     u1w_dbg_put_bytes(buf, rx_len);
+#if (U1W_DEBUG_PARSE_EN != 0U)
+    u1w_dbg_put_parse(buf, rx_len);
+#endif
     u1w_dbg_put_str(" OK\r\n");
 }
 

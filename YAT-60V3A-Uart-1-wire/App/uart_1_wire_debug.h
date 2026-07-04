@@ -16,7 +16,7 @@
 
 /* 总开关：0=关闭全部一线调试日志，1=打开。 */
 #ifndef U1W_DEBUG_EN
-#define U1W_DEBUG_EN                        (1U)
+#define U1W_DEBUG_EN                        (0U)
 #endif
 
 /* 解析日志开关：当前成功帧已合并打印，本宏保留给调试配置使用。 */

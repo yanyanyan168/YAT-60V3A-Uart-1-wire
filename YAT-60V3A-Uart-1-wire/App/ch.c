@@ -107,7 +107,7 @@ static void ch_set_state(CH_STATUS_Types next_state, char *reason)
      * 1. 减少多次 printf 调用和重复格式字符串，降低 C51 代码体积。
      * 2. NTC 正常范围在 int 内，按 s16 打印，避免引入 long printf 格式。
      */
-    uart_printf("状态:%s到%s 原因:%s V=%umV I=%umA NTC=%d\n",
+    uart_printf("状态:%s -> %s :%s V=%umV I=%umA NTC=%d\n",
                 ch_state_name(ch_state),
                 ch_state_name(next_state),
                 (reason != 0) ? reason : "无",
@@ -204,13 +204,13 @@ static u16 ch_get_cccv_work_current_ma(u16 target_current_ma)
             /*
              * 每次降低 100mA，最低限制到 iGED。
              */
-            if(s_cccv_curr_limit_ma > (u16)(iGED + 100))
+            if(s_cccv_curr_limit_ma > (u16)(iGED + 500))
             {
-                s_cccv_curr_limit_ma -= 100;
+                s_cccv_curr_limit_ma -= 500;
             }
             else
             {
-                s_cccv_curr_limit_ma = iGED;
+                s_cccv_curr_limit_ma = iGED+100;
             }
         }
     }
@@ -661,7 +661,7 @@ static bit ch_battery_removed_check_10ms(void)
                     return 1;
                 }
                 s_remove_cnt = 0U;
-                ch_set_state(BMS_ERR, "拔除异常");
+                ch_set_state(BMS_ERR, "拔出异常");
                 return 1;
             }
             return 1;
@@ -931,6 +931,7 @@ void usr_ch_func(void)
                     }
                     else if(u1w_info.handshake_ok != 0U)
                     {
+                        pc_uart_print_batt();
                         ch_set_state(CH_Check, "握手成功");
                     }
                     else
@@ -1175,7 +1176,7 @@ void usr_ch_func(void)
                 RGed_Flash(50);
                 if(u1w_info.comm_timeout != 0U)
                 {
-                    ch_set_state(BMS_ERR, "温度等待通信超时");
+                    ch_set_state(BMS_ERR, "温度通信超时");
                 }
                 else if((u1w_info.charge_status & CH_BMS_ERR_MASK) != 0U)
                 {

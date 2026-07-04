@@ -1,44 +1,66 @@
-[06-24 17:43:39]Log start
-[06-24 17:43:39]Serial init start!
-[06-24 17:43:39]Download driver ok!
-[06-24 17:43:39]uart_txm8c1200_set_driver:0x0
-[06-24 17:43:39]user uart set driver ok!
-[06-24 17:43:39]TXLink ready ok!
-[06-24 17:43:41]TXLink init failed!
-[06-24 17:43:52]DllUv3Cap:0x2
-[06-24 17:43:52]DllUv3Cap:0x6d
-[06-24 17:43:52]DllUv3Cap:0x1
-[06-24 17:43:52]Serial init start!
-[06-24 17:43:53]uart_txm8c1200_set_driver:0x0
-[06-24 17:43:53]user uart set driver ok!
-[06-24 17:43:53]TXLink ready ok!
-[06-24 17:43:54]TXLink init failed!
-[06-24 17:43:54]uart_txm8c1200_set_driver:0x0
-[06-24 17:43:54]user uart set driver ok!
-[06-24 17:43:54]TXLink ready ok!
-[06-24 17:43:55]TXLink init failed!
-[06-24 17:43:55]uart_txm8c1200_set_driver:0x0
-[06-24 17:43:55]user uart set driver ok!
-[06-24 17:43:55]TXLink ready ok!
-[06-24 17:43:56]TXLink init failed!
-[06-24 17:43:57]uart_txm8c1200_set_driver:0x0
-[06-24 17:43:57]user uart set driver ok!
-[06-24 17:43:57]TXLink ready ok!
-[06-24 17:43:58]TXLink init failed!
-[06-24 17:43:58]uart_txm8c1200_set_driver:0x0
-[06-24 17:43:58]user uart set driver ok!
-[06-24 17:43:58]TXLink ready ok!
-[06-24 17:43:59]TXLink init failed!
-[06-24 17:43:59]uart_txm8c1200_set_driver:0x0
-[06-24 17:43:59]user uart set driver ok!
-[06-24 17:43:59]TXLink ready ok!
-[06-24 17:44:00]TXLink init failed!
-[06-24 17:44:00]Serial close ok!
-[06-24 17:55:37]DllUv3Cap:0x2
-[06-24 17:55:37]DllUv3Cap:0x64
-[06-27 15:05:40]DllUv3Cap:0x2
-[06-27 15:05:40]DllUv3Cap:0x64
-[06-27 15:56:23]DllUv3Cap:0x2
-[06-27 15:56:23]DllUv3Cap:0x64
-[06-27 17:11:50]DllUv3Cap:0x2
-[06-27 17:11:50]DllUv3Cap:0x64
+[07-03 15:14:52]Log start
+[07-03 15:14:52]Serial init start!
+[07-03 15:14:52]Download driver ok!
+[07-03 15:14:52]uart_txm8c1200_set_driver:0x0
+[07-03 15:14:52]user uart set driver ok!
+[07-03 15:14:52]TXLink ready ok!
+[07-03 15:14:53]TXLink init ok!
+[07-03 15:14:53]Serial close ok!
+[07-03 15:14:53]load_debug_init_api chip id:1260
+[07-03 15:14:53]sys_info_init! 
+[07-03 15:14:53]AG_Init: 0x30a
+[07-03 15:14:53]AG_Init: 0x30b
+[07-03 15:14:53]AG_Init: 0x30f
+[07-03 15:14:53]AG_Init: 0x310
+[07-03 15:14:53]AG_Init: 0x311
+[07-03 15:14:53]AG_Init: 0x312
+[07-03 15:14:53]AG_Init: 0x100
+[07-03 15:14:53]InitMem: 0x0
+[07-03 15:14:53]Serial init start!
+[07-03 15:14:53]chip_init_api
+[07-03 15:14:53]TXLink chip init ok!
+[07-03 15:14:53]AG_Init: 0x201
+[07-03 15:14:53]AG_Init: 0x202
+[07-03 15:14:53]AG_Init: 0x203
+[07-03 15:14:53]AG_Init: 0x204
+[07-03 15:14:53]AG_Init: 0x205
+[07-03 15:14:53]AG_Init: 0x206
+[07-03 15:14:53]AG_Init: 0x207
+[07-03 15:14:53]AG_Init: 0x313
+[07-03 15:14:53]Serial init start!
+[07-03 15:14:53]uart_txm8c1200_check_dev_id:
+[07-03 15:14:53]uart_txm8c1200_check_crc_bin check failed 2:
+[07-03 15:14:53]uart_txm8c1200_check_dev_id ok:
+[07-03 15:14:53]EraseFlash: 0x0
+[07-03 15:14:53]TXLink chip erase ok!
+[07-03 15:14:53]AG_Init: 0x314
+[07-03 15:14:53]FlashLoad: 0x0
+[07-03 15:14:53]InitProgress: Loading...
+[07-03 15:14:53]WriteToFlash: 0xff000000
+[07-03 15:14:53]WriteToFlash: 0xff000800
+[07-03 15:14:54]WriteToFlash: 0xff001000
+[07-03 15:14:55]WriteToFlash: 0xff001800
+[07-03 15:14:55]WriteToFlash: 0xff002000
+[07-03 15:14:56]WriteToFlash: 0xff002800
+[07-03 15:14:56]WriteToFlash: 0xff003000
+[07-03 15:14:57]WriteToFlash: 0xff003800
+[07-03 15:14:57]InitProgress: Verifying...
+[07-03 15:14:57]VerifyFlash nAdr: 0xff000000
+[07-03 15:14:57]VerifyFlash nAdr: 0xff000800
+[07-03 15:14:57]VerifyFlash nAdr: 0xff001000
+[07-03 15:14:57]VerifyFlash nAdr: 0xff001800
+[07-03 15:14:57]VerifyFlash nAdr: 0xff002000
+[07-03 15:14:57]VerifyFlash nAdr: 0xff002800
+[07-03 15:14:57]VerifyFlash nAdr: 0xff003000
+[07-03 15:14:58]VerifyFlash nAdr: 0xff003800
+[07-03 15:14:58]chip_reset_api
+[07-03 15:14:58]Serial close ok!
+[07-03 15:14:58]AG_Init: 0x40c
+[07-03 15:14:58]TXLink ready failed!
+[07-03 15:14:58]TXLink ready failed!
+[07-03 15:14:58]TXLink ready failed!
+[07-03 15:14:58]CloseAllDlg: 0x0
+[07-03 15:14:58]StopTarget: 0x0
+[07-03 15:14:58]FreeCache: 0x0
+[07-03 15:14:58]StopTarget: 0x0
+[07-03 15:14:58]FreeCache: 0x0
