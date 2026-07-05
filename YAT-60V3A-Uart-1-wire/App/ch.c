@@ -535,7 +535,7 @@ static bit ch_no_current_fault_check_10ms(u16 target_voltage_mv, u16 target_curr
         return 0;
     }
 
-    if(target_current_ma < iPRE)  /* 目标电流太小，不做有压无流判断 */
+    if(target_current_ma == 0U)  /* 没有目标电流时，不做有压无流判断 */
     {
         s_no_current_cnt = 0U;
         return 0;
@@ -547,9 +547,11 @@ static bit ch_no_current_fault_check_10ms(u16 target_voltage_mv, u16 target_curr
         return 0;
     }
 
-    if((val.vout > vSTART) && (val.curr < 100U))  /* 有输出电压，但电流小于100mA */
+    if((val.vout > vSTART) &&
+       (((target_current_ma <= 200U) && (val.curr < 30U)) ||    /* 修复小电流：小于30mA才认为无流 */
+        ((target_current_ma > 200U) && (val.curr < 100U))))     /* 预充/CCCV：小于100mA认为无流 */
     {
-        if(++s_no_current_cnt >= 300U)             /* 连续3秒有压无流 */
+        if(++s_no_current_cnt >= 300U)                          /* 连续3秒有压无流 */
         {
             ch_output_all_off();
             s_no_current_cnt = 0U;
@@ -829,6 +831,10 @@ void usr_ch_func(void)
                 Ged_Flash(50);
                 TimCut();
                 set_Curr_Duty(SET_CURR(iREPAIR));
+                if(ch_no_current_fault_check_10ms(target_voltage_mv, iREPAIR, 0U) != 0)  /* 修复已开小电流，通信正常但无电流也判异常 */
+                {
+                    break;
+                }
 
                 if(Tim.min >= TIM_PRE)
                 {
@@ -892,7 +898,7 @@ void usr_ch_func(void)
                     s_remove_cnt = 1U;
                     break;
                 }
-                if(ch_no_current_fault_check_10ms(target_voltage_mv, target_current_ma, 0U) != 0)
+                if(ch_no_current_fault_check_10ms(target_voltage_mv, iPRE, 0U) != 0)  /* 预充实际按 iPRE 输出，不能因协议目标电流偏小而漏判 */
                 {
                     break;
                 }
