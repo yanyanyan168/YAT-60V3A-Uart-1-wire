@@ -103,7 +103,6 @@ static u8 code s_temp_wait_cmd[] =
 };
 
 UART_1WIRE_INFO_Types xdata uart_1_wire;
-UART_1WIRE_CHARGE_INFO_Types idata u1w_info;
 
 static void u1w_release_com(void)
 {
@@ -842,19 +841,9 @@ void uart_1_wire_set_stage(u8 stage)
 
 static void u1w_refresh_info(void)
 {
-    u1w_info.stage = s_u1w.stage;
-    u1w_info.handshake_ok = ((uart_1_wire.handshake_mask & U1W_HANDSHAKE_MASK) == U1W_HANDSHAKE_MASK) ? 1U : 0U;
-    u1w_info.comm_timeout = uart_1_wire.comm_timeout;
-    u1w_info.key_timeout_cmd = uart_1_wire.key_timeout_cmd;
-    u1w_info.soc_percent = uart_1_wire.soc_percent;
-    u1w_info.charge_status = uart_1_wire.charge_status;
-    u1w_info.cell_type = uart_1_wire.cell_type;
-    u1w_info.batt_temp_degc = uart_1_wire.batt_temp_degc;
-    u1w_info.mos_temp_degc = uart_1_wire.mos_temp_degc;
-    u1w_info.target_voltage_mv = U1W_LIMIT_VOLTAGE(uart_1_wire.target_voltage_mv);
-    u1w_info.target_current_ma = U1W_LIMIT_CURRENT(uart_1_wire.target_current_ma);
-    u1w_info.cell_max_mv = uart_1_wire.cell_max_mv;
-    u1w_info.no_rx_10ms = s_u1w.any_rx_age_10ms;
+    uart_1_wire.stage = s_u1w.stage;
+    uart_1_wire.handshake_ok = ((uart_1_wire.handshake_mask & U1W_HANDSHAKE_MASK) == U1W_HANDSHAKE_MASK) ? 1U : 0U;
+    uart_1_wire.no_rx_10ms = s_u1w.any_rx_age_10ms;
 }
 
 /**

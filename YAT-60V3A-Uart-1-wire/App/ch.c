@@ -483,23 +483,23 @@ static void ch_output_all_off(void)
   */
 static bit ch_bms_temp_fault_active(void)
 {
-    if((u1w_info.charge_status & CH_BMS_TEMP_MASK) != 0U)
+    if((uart_1_wire.charge_status & CH_BMS_TEMP_MASK) != 0U)
     {
         return 1;
     }
 
-    if(u1w_info.cell_type == U1W_CELL_TYPE_21700)
+    if(uart_1_wire.cell_type == U1W_CELL_TYPE_21700)
     {
-        if((u1w_info.batt_temp_degc < BATT_21700_CHG_TEMP_LOW_C) ||
-           (u1w_info.batt_temp_degc > BATT_21700_CHG_TEMP_HIGH_C))
+        if((uart_1_wire.batt_temp_degc < BATT_21700_CHG_TEMP_LOW_C) ||
+           (uart_1_wire.batt_temp_degc > BATT_21700_CHG_TEMP_HIGH_C))
         {
             return 1;
         }
     }
     else
     {
-        if((u1w_info.batt_temp_degc < BATT_18650_CHG_TEMP_LOW_C) ||
-           (u1w_info.batt_temp_degc > BATT_18650_CHG_TEMP_HIGH_C))
+        if((uart_1_wire.batt_temp_degc < BATT_18650_CHG_TEMP_LOW_C) ||
+           (uart_1_wire.batt_temp_degc > BATT_18650_CHG_TEMP_HIGH_C))
         {
             return 1;
         }
@@ -510,23 +510,23 @@ static bit ch_bms_temp_fault_active(void)
 
 static bit ch_bms_temp_recovered(void)
 {
-    if((u1w_info.charge_status & CH_BMS_TEMP_MASK) != 0U)
+    if((uart_1_wire.charge_status & CH_BMS_TEMP_MASK) != 0U)
     {
         return 0;
     }
 
-    if(u1w_info.cell_type == U1W_CELL_TYPE_21700)
+    if(uart_1_wire.cell_type == U1W_CELL_TYPE_21700)
     {
-        if((u1w_info.batt_temp_degc >= BATT_21700_REC_TEMP_LOW_C) &&
-           (u1w_info.batt_temp_degc <= BATT_21700_REC_TEMP_HIGH_C))
+        if((uart_1_wire.batt_temp_degc >= BATT_21700_REC_TEMP_LOW_C) &&
+           (uart_1_wire.batt_temp_degc <= BATT_21700_REC_TEMP_HIGH_C))
         {
             return 1;
         }
     }
     else
     {
-        if((u1w_info.batt_temp_degc >= BATT_18650_REC_TEMP_LOW_C) &&
-           (u1w_info.batt_temp_degc <= BATT_18650_REC_TEMP_HIGH_C))
+        if((uart_1_wire.batt_temp_degc >= BATT_18650_REC_TEMP_LOW_C) &&
+           (uart_1_wire.batt_temp_degc <= BATT_18650_REC_TEMP_HIGH_C))
         {
             return 1;
         }
@@ -537,7 +537,7 @@ static bit ch_bms_temp_recovered(void)
 
 static bit ch_bms_status_check(void)
 {
-    if((u1w_info.charge_status & CH_BMS_ERR_MASK) != 0U)
+    if((uart_1_wire.charge_status & CH_BMS_ERR_MASK) != 0U)
     {
         ch_set_state(BMS_ERR, "BMS异常");
         return 1;
@@ -547,7 +547,7 @@ static bit ch_bms_status_check(void)
         ch_set_state(BMS_TEMP_ERR, "BMS温度异常");
         return 1;
     }
-    if((u1w_info.charge_status & U1W_B4_OV) != 0U)
+    if((uart_1_wire.charge_status & U1W_B4_OV) != 0U)
     {
         ch_set_state(CH_FULL, "BMS满电");
         return 1;
@@ -562,7 +562,7 @@ static bit ch_bms_status_check(void)
   */
 static bit ch_no_current_fault_check_10ms(u16 target_voltage_mv, u16 target_current_ma, u8 full_margin_en)
 {
-    if((u1w_info.comm_timeout != 0U) || (u1w_info.no_rx_10ms >= 100U))  /* 1秒无一线帧时交给拔电池/通信异常判断 */
+    if((uart_1_wire.comm_timeout != 0U) || (uart_1_wire.no_rx_10ms >= 100U))  /* 1秒无一线帧时交给拔电池/通信异常判断 */
     {
         s_no_current_cnt = 0U;
         return 0;
@@ -635,13 +635,13 @@ void usr_ch_func(void)
                 break;
             }
 
-            target_voltage_mv = u1w_info.target_voltage_mv;
+            target_voltage_mv = uart_1_wire.target_voltage_mv;
             if(target_voltage_mv > SET_vMAX)
             {
                 target_voltage_mv = SET_vMAX;
             }
 
-            target_current_ma = u1w_info.target_current_ma;
+            target_current_ma = uart_1_wire.target_current_ma;
             if(target_current_ma > iMAX)
             {
                 target_current_ma = iMAX;
@@ -738,11 +738,11 @@ void usr_ch_func(void)
                 }
                 else
                 {
-                    if(u1w_info.comm_timeout != 0U)
+                    if(uart_1_wire.comm_timeout != 0U)
                     {
                         ch_set_state(BMS_ERR, "BMS通信超时");
                     }
-                    else if(u1w_info.handshake_ok != 0U)
+                    else if(uart_1_wire.handshake_ok != 0U)
                     {
                         pc_uart_print_batt();
                         ch_set_state(CH_Check, "握手成功");
@@ -778,7 +778,7 @@ void usr_ch_func(void)
                     s_cut[0] = 0U;
                     pre_end_voltage_mv = ch_get_pre_end_voltage_mv();
 
-                    if(u1w_info.comm_timeout != 0U)
+                    if(uart_1_wire.comm_timeout != 0U)
                     {
                         ch_set_state(BMS_ERR, "BMS通信超时");
                     }
@@ -786,7 +786,7 @@ void usr_ch_func(void)
                     {
                         /* BMS状态函数已完成状态切换。 */
                     }
-                    else if(u1w_info.handshake_ok == 0U)
+                    else if(uart_1_wire.handshake_ok == 0U)
                     {
                         uart_1_wire_reset_link();
                         ch_set_state(BMS_HANDSHAKE, "重新握手");
@@ -818,7 +818,7 @@ void usr_ch_func(void)
                     ch_output_all_off();
                     break;
                 }
-                if(u1w_info.comm_timeout != 0U)
+                if(uart_1_wire.comm_timeout != 0U)
                 {
                     ch_set_state(BMS_ERR, "BMS通信超时");
                     break;
@@ -891,7 +891,7 @@ void usr_ch_func(void)
                     ch_output_all_off();
                     break;
                 }
-                if((val.curr < iGED) && (u1w_info.no_rx_10ms >= 100U)) /* 小电流且1秒无一线帧，疑似拔电池 */
+                if((val.curr < iGED) && (uart_1_wire.no_rx_10ms >= 100U)) /* 小电流且1秒无一线帧，疑似拔电池 */
                 {
                     ch_output_all_off();
                     BATT_DIVIDER_EN = 1;
@@ -902,7 +902,7 @@ void usr_ch_func(void)
                 {
                     break;
                 }
-                if(u1w_info.comm_timeout != 0U)
+                if(uart_1_wire.comm_timeout != 0U)
                 {
                     ch_set_state(BMS_ERR, "BMS通信超时");
                     break;
@@ -990,7 +990,7 @@ void usr_ch_func(void)
                     ch_output_all_off();
                     break;
                 }
-                if((val.curr < iGED) && (u1w_info.no_rx_10ms >= 100U)) /* 小电流且1秒无一线帧，疑似拔电池 */
+                if((val.curr < iGED) && (uart_1_wire.no_rx_10ms >= 100U)) /* 小电流且1秒无一线帧，疑似拔电池 */
                 {
                     s_dummy_load_10ms = 500U;
                     ch_output_all_off();
@@ -1002,7 +1002,7 @@ void usr_ch_func(void)
                 {
                     break;
                 }
-                if(u1w_info.comm_timeout != 0U)
+                if(uart_1_wire.comm_timeout != 0U)
                 {
                     ch_set_state(BMS_ERR, "BMS通信超时");
                     break;
@@ -1191,11 +1191,11 @@ stopped_state_probe:
 
                 if(ch_state == BMS_TEMP_ERR)
                 {
-                    if(u1w_info.comm_timeout != 0U)
+                    if(uart_1_wire.comm_timeout != 0U)
                     {
                         ch_set_state(BMS_ERR, "温度通信超时");
                     }
-                    else if((u1w_info.charge_status & CH_BMS_ERR_MASK) != 0U)
+                    else if((uart_1_wire.charge_status & CH_BMS_ERR_MASK) != 0U)
                     {
                         ch_set_state(BMS_ERR, "BMS异常");
                     }

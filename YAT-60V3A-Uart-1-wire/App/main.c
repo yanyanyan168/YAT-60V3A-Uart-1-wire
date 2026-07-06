@@ -325,15 +325,15 @@ static void test_flow_task(void)
 
     uart_1_wire_poll_10ms();
 
-    if((u1w_info.comm_timeout != 0U) && (s_flow_timeout_printed == 0U))
+    if((uart_1_wire.comm_timeout != 0U) && (s_flow_timeout_printed == 0U))
     {
         s_flow_timeout_printed = 1U;
         test_put_str("[测试] 通信超时 命令=0x");
-        test_put_hex8(u1w_info.key_timeout_cmd);
+        test_put_hex8(uart_1_wire.key_timeout_cmd);
         test_put_crlf();
     }
 
-    if((s_flow_charge == 0U) && (u1w_info.handshake_ok != 0U))
+    if((s_flow_charge == 0U) && (uart_1_wire.handshake_ok != 0U))
     {
         s_flow_charge = 1U;
         test_put_str("[测试] 握手完成");

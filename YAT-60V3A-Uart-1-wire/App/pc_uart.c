@@ -98,22 +98,22 @@ static void pc_uart_print_param(void)
 void pc_uart_print_batt(void)
 {
     uart_printf("[BMS] 阶段=%bu, 握手=%bu, 超时=%bu, 超时命令=%bu\r\n",
-                u1w_info.stage,
-                u1w_info.handshake_ok,
-                u1w_info.comm_timeout,
-                u1w_info.key_timeout_cmd);
+                uart_1_wire.stage,
+                uart_1_wire.handshake_ok,
+                uart_1_wire.comm_timeout,
+                uart_1_wire.key_timeout_cmd);
     uart_printf("[BMS] 电池包=%bu串%bu并, 容量=%u(0.1Ah), 目标=%u mV/%u mA\r\n",
                 uart_1_wire.cell_series,
                 uart_1_wire.cell_parallel,
                 uart_1_wire.cell_cap_01ah,
-                u1w_info.target_voltage_mv,
-                u1w_info.target_current_ma);
+                uart_1_wire.target_voltage_mv,
+                uart_1_wire.target_current_ma);
     uart_printf("[BMS] 单节最高=%u mV, 电量=%bu, 电池温度=%dC, MOS温度=%dC, 状态=%bu\r\n",
-                u1w_info.cell_max_mv,
-                u1w_info.soc_percent,
-                (s16)u1w_info.batt_temp_degc,
-                (s16)u1w_info.mos_temp_degc,
-                u1w_info.charge_status);
+                uart_1_wire.cell_max_mv,
+                uart_1_wire.soc_percent,
+                (s16)uart_1_wire.batt_temp_degc,
+                (s16)uart_1_wire.mos_temp_degc,
+                uart_1_wire.charge_status);
 }
 /**
   * @brief  写入 u16/u32 小端数据，保持 54.6V 原调试帧字节序。

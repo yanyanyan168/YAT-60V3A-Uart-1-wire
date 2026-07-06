@@ -81,7 +81,9 @@ typedef struct
     u8  last_error;
     u8  comm_timeout;                       /* 1=总通信或关键帧超时 */
     u8  key_timeout_cmd;                    /* 最近超时的关键帧CMD，0表示总超时 */
-    u8  handshake_mask;                     /* A0/A1/A4/A6/A7/B1/B3/B4 收齐标志 */
+    u8  stage;                              /* UART_1WIRE_STAGE_Types */
+    u8  handshake_ok;                       /* A0/A1/A4/A6/A7/B1/B3/B4 收齐标志 */
+    u8  handshake_mask;                     /* A0/A1/A4/A6/A7/B1/B3/B4 收齐原始掩码 */
     u8  retry_over;                         /* 兼容旧调试含义：通信已超时 */
 
     u8  pack_id;
@@ -106,28 +108,10 @@ typedef struct
     u16 target_current_ma;
 
     u16 offline_count_10ms;                 /* 距离上次合法帧的时间 */
+    u16 no_rx_10ms;                         /* 距离上次合法帧的时间，供充电中拔电池判断 */
 } UART_1WIRE_INFO_Types;
 
-/* ch.c 每 10ms 获取一次这个快照，不直接关心通信内部变量。 */
-typedef struct
-{
-    u8  stage;
-    u8  handshake_ok;
-    u8  comm_timeout;
-    u8  key_timeout_cmd;
-    u8  soc_percent;
-    u8  charge_status;
-    u8  cell_type;
-    s8  batt_temp_degc;
-    s8  mos_temp_degc;
-    u16 target_voltage_mv;
-    u16 target_current_ma;
-    u16 cell_max_mv;
-    u16 no_rx_10ms;                         /* 距离上次合法帧的时间，供充电中拔电池判断 */
-} UART_1WIRE_CHARGE_INFO_Types;
-
 extern UART_1WIRE_INFO_Types xdata uart_1_wire;
-extern UART_1WIRE_CHARGE_INFO_Types idata u1w_info;
 
 void uart_1_wire_init(void);
 void uart_1_wire_reset_link(void);
