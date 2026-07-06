@@ -40,6 +40,7 @@ static u16 idata s_no_current_cnt;             /* 充电中有压无流异常确认计数。 *
 static u16 idata s_idle_low_last_mv;          /* 待机低压候选上次电压。 */
 static u16 idata s_vout_probe_period_10ms;    /* 满电/异常时分压检测间隔计数。 */
 static u8  idata s_vout_probe_on_10ms;        /* 满电/异常时分压检测开窗计数。 */
+static u16 idata s_dummy_load_10ms;            /* DUMMY_LOAD hold counter, unit 10ms. */
 
 #define CH_BMS_TEMP_MASK             (U1W_B4_LOW_TEMP | U1W_B4_HIGH_TEMP | U1W_B4_MOS_HOT)
 #define CH_BMS_ERR_MASK              (U1W_B4_OCP | U1W_B4_SHORT | U1W_B4_TIMEOUT | U1W_B4_FAIL)
@@ -478,7 +479,7 @@ static void ch_output_all_off(void)
     REPAIR_OUTPUT = 0;   // 低预充关闭
     VADJ = 0;
     FAN = 0;
-    DUMMY_LOAD = 0;  // 关闭假负载
+    DUMMY_LOAD = 0;       // 关闭假负载
     BATT_DIVIDER_EN = 0;  // 满电/异常默认关闭电池分压，只在检测窗口短时打开，降低漏电和倒灌风险
     set_Curr_Duty(PWMMAX/2);
 }
@@ -578,6 +579,7 @@ void usr_ch_func(void)
 
     ch_state = CH_IDLE;
     last_state = CH_IDLE;
+    s_dummy_load_10ms = 500U;
 
     next_10ms = timer_deadline_ms(TASK_10MS);
     uart_1_wire_reset_link();
@@ -609,6 +611,10 @@ void usr_ch_func(void)
 
             if(last_state != ch_state)
             {
+                if(last_state == CH_CCCV)
+                {
+                    s_dummy_load_10ms = 500U;
+                }
                 last_state = ch_state;
                 s_cut[0] = 0;
                 s_cut[1] = 0;
@@ -822,20 +828,12 @@ void usr_ch_func(void)
                 }
 
                 DCJK = 0;
+                REPAIR_OUTPUT = 1;
                 VADJ = 0;
-                if(DCJK == 0)
-                {
-                    REPAIR_OUTPUT = 1;
-                }
                 FAN = 1;
                 Ged_Flash(50);
                 TimCut();
-                set_Curr_Duty(SET_CURR(iREPAIR));
-                if(ch_no_current_fault_check_10ms(target_voltage_mv, iREPAIR, 0U) != 0)  /* 修复已开小电流，通信正常但无电流也判异常 */
-                {
-                    break;
-                }
-
+                set_Curr_Duty(PWMMAX/2);       /* Keep primary/opto current loop alive; not repair current control. */
                 if(Tim.min >= TIM_PRE)
                 {
                     ch_set_state(CH_TimOut, "修复超时");
@@ -978,6 +976,7 @@ void usr_ch_func(void)
                 }
                 if((val.curr < iGED) && (u1w_info.no_rx_10ms >= 100U)) /* 小电流且1秒无一线帧，疑似拔电池 */
                 {
+                    s_dummy_load_10ms = 500U;
                     ch_output_all_off();
                     BATT_DIVIDER_EN = 1;
                     s_remove_cnt = 1U;
@@ -1079,10 +1078,11 @@ void usr_ch_func(void)
                             ch_set_state(CH_IDLE, "拔电池");
                         }
                     }
-                    else if(val.vout < vCH60)
+                    else if(((uart_1_wire.cell_max_mv != 0U) && (uart_1_wire.cell_max_mv < CELL_RECHG_MV)) ||
+                            ((uart_1_wire.cell_max_mv == 0U) && (val.vout < vCH60)))
                     {
                         s_remove_cnt = 0U;
-                        if(++s_cut[0] >= 2U)          /* 满电后电压回落，重新握手 */
+                        if(++s_cut[0] >= 2U)          /* Prefer B1 max cell; fallback to pack voltage only without B1. */
                         {
                             uart_1_wire_reset_link();
                             ch_set_state(BMS_HANDSHAKE, "满电后重新插入");
@@ -1216,6 +1216,16 @@ stopped_state_probe:
                 set_Curr_Duty(SET_CURR(iMAX));
                 Ged_Flash(50);
                 break;
+            }
+
+            if(s_dummy_load_10ms != 0U)
+            {
+                DUMMY_LOAD = 1;
+                s_dummy_load_10ms--;
+            }
+            else
+            {
+                DUMMY_LOAD = 0;
             }
         }
     }
