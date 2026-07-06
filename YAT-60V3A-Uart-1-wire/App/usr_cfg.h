@@ -64,6 +64,14 @@
 #define T_HOT_ERR_OK                (800U)                   /* NTC 高温保护恢复阈值，单位：0.1℃，800=80.0℃ */
 #define T_CH_HOT                    (950U)                   /* 内部高温提示阈值，不参与降额，单位：0.1℃ */
 #define T_CH_HOT_OK                 (700U)                   /* 内部高温提示恢复阈值，不参与降额，单位：0.1℃ */
+#define BATT_18650_CHG_TEMP_LOW_C   (-2)                     /* 18650电池充电低温保护阈值，单位：℃ */
+#define BATT_18650_CHG_TEMP_HIGH_C  (50)                     /* 18650电池充电高温保护阈值，单位：℃ */
+#define BATT_18650_REC_TEMP_LOW_C   (0)                      /* 18650电池温度恢复低阈值，单位：℃ */
+#define BATT_18650_REC_TEMP_HIGH_C  (45)                     /* 18650电池温度恢复高阈值，单位：℃ */
+#define BATT_21700_CHG_TEMP_LOW_C   (-2)                     /* 21700电池充电低温保护阈值，单位：℃ */
+#define BATT_21700_CHG_TEMP_HIGH_C  (57)                     /* 21700电池充电高温保护阈值，单位：℃ */
+#define BATT_21700_REC_TEMP_LOW_C   (0)                      /* 21700电池温度恢复低阈值，单位：℃ */
+#define BATT_21700_REC_TEMP_HIGH_C  (50)                     /* 21700电池温度恢复高阈值，单位：℃ */
 
 /* 通信参数 ------------------------------------------------------------*/
 #define DBG_BAUD                    (115200UL)               /* 调试串口波特率 */

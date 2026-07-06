@@ -488,6 +488,50 @@ static bit ch_bms_temp_fault_active(void)
         return 1;
     }
 
+    if(u1w_info.cell_type == U1W_CELL_TYPE_21700)
+    {
+        if((u1w_info.batt_temp_degc < BATT_21700_CHG_TEMP_LOW_C) ||
+           (u1w_info.batt_temp_degc > BATT_21700_CHG_TEMP_HIGH_C))
+        {
+            return 1;
+        }
+    }
+    else
+    {
+        if((u1w_info.batt_temp_degc < BATT_18650_CHG_TEMP_LOW_C) ||
+           (u1w_info.batt_temp_degc > BATT_18650_CHG_TEMP_HIGH_C))
+        {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+static bit ch_bms_temp_recovered(void)
+{
+    if((u1w_info.charge_status & CH_BMS_TEMP_MASK) != 0U)
+    {
+        return 0;
+    }
+
+    if(u1w_info.cell_type == U1W_CELL_TYPE_21700)
+    {
+        if((u1w_info.batt_temp_degc >= BATT_21700_REC_TEMP_LOW_C) &&
+           (u1w_info.batt_temp_degc <= BATT_21700_REC_TEMP_HIGH_C))
+        {
+            return 1;
+        }
+    }
+    else
+    {
+        if((u1w_info.batt_temp_degc >= BATT_18650_REC_TEMP_LOW_C) &&
+           (u1w_info.batt_temp_degc <= BATT_18650_REC_TEMP_HIGH_C))
+        {
+            return 1;
+        }
+    }
+
     return 0;
 }
 
@@ -1155,7 +1199,7 @@ stopped_state_probe:
                     {
                         ch_set_state(BMS_ERR, "BMSÒì³£");
                     }
-                    else if(ch_bms_temp_fault_active() == 0)
+                    else if(ch_bms_temp_recovered() != 0)
                     {
                         uart_1_wire_reset_link();
                         ch_set_state(BMS_HANDSHAKE, "BMSÎÂ¶È»Ö¸´");

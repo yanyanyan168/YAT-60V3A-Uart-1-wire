@@ -29,6 +29,7 @@
 #ifndef U1W_MASTER
 #define U1W_MASTER                         (0x10U)    /* A0 主机类型：充电器 */
 #endif
+#define U1W_CELL_TYPE_21700                 (1U)       /* A1 XX=1表示21700，其他按18650处理 */
 
 #define U1W_B6_TYPE_MOS                    (0x01U)    /* B6：MOS控制 */
 #define U1W_B6_TYPE_SOC                    (0x03U)    /* B6：满电显示SOC */
@@ -84,6 +85,7 @@ typedef struct
     u8  retry_over;                         /* 兼容旧调试含义：通信已超时 */
 
     u8  pack_id;
+    u8  cell_type;
     u8  cell_series;
     u8  cell_parallel;
     u8  soc_percent;
@@ -115,6 +117,7 @@ typedef struct
     u8  key_timeout_cmd;
     u8  soc_percent;
     u8  charge_status;
+    u8  cell_type;
     s8  batt_temp_degc;
     s8  mos_temp_degc;
     u16 target_voltage_mv;

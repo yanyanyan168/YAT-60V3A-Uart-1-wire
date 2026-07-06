@@ -263,7 +263,8 @@ static void u1w_parse_frame(u8 *frame)
 
     case U1W_CMD_A1:
         key = U1W_KEY_A1;
-        /* A1 XX YY CHK：YY=容量 0.1Ah。 */
+        /* A1 XX YY CHK：XX=电芯规格，YY=容量 0.1Ah。 */
+        uart_1_wire.cell_type = frame[1];
         uart_1_wire.cell_cap_01ah = frame[2];
         break;
 
@@ -747,6 +748,7 @@ void uart_1_wire_init(void)
 
     uart_1_wire.link_state = U1W_LINK_OFFLINE;
     uart_1_wire.last_error = U1W_ERR_NONE;
+    uart_1_wire.cell_type = 0U;
     uart_1_wire.cell_series = BAT_SERIES;
     uart_1_wire.cell_parallel = 1U;
     uart_1_wire.cell_pre_mv = CELL_PRE_MV;
@@ -846,6 +848,7 @@ static void u1w_refresh_info(void)
     u1w_info.key_timeout_cmd = uart_1_wire.key_timeout_cmd;
     u1w_info.soc_percent = uart_1_wire.soc_percent;
     u1w_info.charge_status = uart_1_wire.charge_status;
+    u1w_info.cell_type = uart_1_wire.cell_type;
     u1w_info.batt_temp_degc = uart_1_wire.batt_temp_degc;
     u1w_info.mos_temp_degc = uart_1_wire.mos_temp_degc;
     u1w_info.target_voltage_mv = U1W_LIMIT_VOLTAGE(uart_1_wire.target_voltage_mv);
