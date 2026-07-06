@@ -23,7 +23,7 @@
  
 /* UART初始化及通道0(调试)相关函数声明 */
 void uart_init(void);
-void ch_uart_init(void);
+void ch_uart_init(u32 baud);
 void ch_uart_set_baud(u32 baud);
 void ch_uart_set_baud_reg(u16 baud_reg);
 void ch_uart_send_byte(u8 dat);

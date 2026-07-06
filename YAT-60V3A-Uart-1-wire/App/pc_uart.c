@@ -49,20 +49,7 @@ static u8 pc_uart_pack_flag(void)
     return flag;
 }
 
-static void pc_uart_print_current_line(char *name, u16 current_ma)
-{
-    uart_printf("%s  %umA\n", name, current_ma);
-}
 
-static void pc_uart_print_voltage_line(char *name, u16 voltage_mv)
-{
-    uart_printf("%s  %umV\n", name, voltage_mv);
-}
-
-static void pc_uart_print_voltage_range_line(char *name, u16 low_mv, u16 high_mv)
-{
-    uart_printf("%s  %u-%umV\n", name, low_mv, high_mv);
-}
 
 /**
   * @brief  打印整机参数，保留原调试口 "par" 命令入口。
@@ -72,24 +59,25 @@ static void pc_uart_print_param(void)
     uart_printf("%s %s\n", MODEL_NAME, VERSION);
     uart_printf("\n%s\n", PROJECT_NAME);
 
-    pc_uart_print_current_line("修复电流", iREPAIR);
-    pc_uart_print_current_line("预充电流", iPRE);
-    pc_uart_print_current_line("恒流电流", iMAX);
-    pc_uart_print_current_line("转灯电流", iGED);
-    pc_uart_print_current_line("保护电流", iOCP);
-    pc_uart_print_current_line("电流恢复", iOCP_OK);
 
-    pc_uart_print_voltage_line("\n识别电压", vSTART);
-    pc_uart_print_voltage_line("修复结束", vPRE_30V);
-    pc_uart_print_voltage_range_line("预充电压", vPRE_30V, vPRE_37V5);
-    pc_uart_print_voltage_line("最高电压", SET_vMAX);
-    pc_uart_print_voltage_line("高压保护", vDCOVP);
+    uart_printf("修复电流  %umA\n", iREPAIR);
+    uart_printf("预充电流  %umA\n", iPRE);
+    uart_printf("恒流电流  %umA\n", iMAX);
+    uart_printf("转灯电流  %umA\n", iGED);
+    uart_printf("保护电流  %umA\n", iOCP);
+    
+    uart_printf("\n识别电压  %umV\n", vSTART);
+    uart_printf("修复结束  %umV\n",   vPRE_30V);
+
+    uart_printf("预充电压  %u-%umV\n",  vPRE_30V, vPRE_37V5);
+    uart_printf("最高电压  %umV\n",   SET_vMAX);
+    uart_printf("高压保护  %umV\n",   vDCOVP);
 
     uart_printf("\n内部NTC:\n");
-    uart_printf("高温关断 ADC>%u\n", T_HOT_ERR);
-    uart_printf("高温恢复 ADC<%u\n", T_HOT_ERR_OK);
-    uart_printf("高温提示 ADC>%u\n", T_CH_HOT);
-    uart_printf("提示恢复 ADC<%u\n", T_CH_HOT_OK);
+    uart_printf("高温关断 %u\n", T_HOT_ERR);
+    uart_printf("高温恢复 %u\n", T_HOT_ERR_OK);
+    uart_printf("高温提示 %u\n", T_CH_HOT);
+    uart_printf("提示恢复 %u\n", T_CH_HOT_OK);
 
     uart_printf("\n预充定时 %umin\n", TIM_PRE);
     uart_printf("CC+CV定时 %umin\n", TIM_CCCV);
@@ -109,14 +97,6 @@ static void pc_uart_print_param(void)
   */
 void pc_uart_print_batt(void)
 {
-    uart_printf("[电池] 输出电压=%u mV, 输出电流=%u mA, NTC=%d(0.1C)\r\n",
-                val.vout,
-                val.curr,
-                (s16)val.i_ntc);
-    uart_printf("[电池] 充电状态=%bu, 故障标志=%bu, 时间=%u\r\n",
-                (u8)ch_state,
-                pc_uart_pack_flag(),
-                timer_get_tick_ms());
     uart_printf("[BMS] 阶段=%bu, 握手=%bu, 超时=%bu, 超时命令=%bu\r\n",
                 u1w_info.stage,
                 u1w_info.handshake_ok,
@@ -160,7 +140,7 @@ static void pc_uart_send_auto_frame(void)
     u32 crc32;
 
     pc_uart_put_u32(s_pc_tx_buf, 0U,  (u32)val.vout);
-    pc_uart_put_u32(s_pc_tx_buf, 4U,  (u32)val.vdc);   /* 本项目无独立 VDC，val.vdc 由 ADC 层镜像 val.vout。 */
+    pc_uart_put_u32(s_pc_tx_buf, 4U,  0);   /* 本项目无独立 VDC，val.vdc 由 ADC 层镜像 val.vout。 */
     pc_uart_put_u32(s_pc_tx_buf, 8U,  (u32)val.curr);
     pc_uart_put_u32(s_pc_tx_buf, 12U, 0UL);
     pc_uart_put_u16(s_pc_tx_buf, 16U, 0U);

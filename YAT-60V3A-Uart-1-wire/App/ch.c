@@ -31,16 +31,15 @@
 CH_STATUS_Types idata ch_state;
 CH_STATUS_Types idata last_state;
 
-static u8 idata s_cut[4];          /* 状态内确认计数，防止临界点抖动。 */
+static u16 idata s_cut[4];          /* 状态内确认计数，防止临界点抖动。 */
 
 static u16 idata s_cccv_curr_limit_ma;        /* CCCV 实际限流电流，单位 mA。 */
 static u8  idata s_cccv_derate_cnt;           /* CCCV 降流间隔计数。 */
 static u8  idata s_remove_cnt;                /* 拔电池确认计数。 */
 static u16 idata s_no_current_cnt;             /* 充电中有压无流异常确认计数。 */
-static u16 idata s_idle_low_last_mv;          /* 待机低压候选上次电压。 */
 static u16 idata s_vout_probe_period_10ms;    /* 满电/异常时分压检测间隔计数。 */
 static u8  idata s_vout_probe_on_10ms;        /* 满电/异常时分压检测开窗计数。 */
-static u16 idata s_dummy_load_10ms;            /* DUMMY_LOAD hold counter, unit 10ms. */
+u16 idata s_dummy_load_10ms;                   /* DUMMY_LOAD hold counter, unit 10ms. */
 
 #define CH_BMS_TEMP_MASK             (U1W_B4_LOW_TEMP | U1W_B4_HIGH_TEMP | U1W_B4_MOS_HOT)
 #define CH_BMS_ERR_MASK              (U1W_B4_OCP | U1W_B4_SHORT | U1W_B4_TIMEOUT | U1W_B4_FAIL)
@@ -104,13 +103,12 @@ static void ch_set_state(CH_STATUS_Types next_state, char *reason)
      * 1. 减少多次 printf 调用和重复格式字符串，降低 C51 代码体积。
      * 2. NTC 正常范围在 int 内，按 s16 打印，避免引入 long printf 格式。
      */
-    uart_printf("状态:%s -> %s :%s V=%umV I=%umA NTC=%d\n",
+    uart_printf("状态:%s -> %s :%s V=%umV I=%umA\n",
                 ch_state_name(ch_state),
                 ch_state_name(next_state),
                 (reason != 0) ? reason : "无",
                 val.vout,
-                val.curr,
-                (s16)val.i_ntc);
+                val.curr);
 
     ch_state = next_state;
 }
@@ -204,10 +202,6 @@ static u16 ch_get_cccv_work_current_ma(u16 target_current_ma)
             if(s_cccv_curr_limit_ma > (u16)(iGED + 500))
             {
                 s_cccv_curr_limit_ma -= 500;
-            }
-            else
-            {
-                s_cccv_curr_limit_ma = iGED+100;
             }
         }
     }
@@ -659,50 +653,17 @@ void usr_ch_func(void)
 
                 RLED = 1;
                 GLED = 0;
-                if(val.vout >= vSTART)
+                if(val.vout >= vRESET)
                 {
-                    s_cut[1] = 0U;
-                    s_idle_low_last_mv = 0U;
-                    if(++s_cut[0] >= 50U)        /* 500ms确认电池已接入 */
+                    if(++s_cut[0] >= 100U)        /* 1000ms确认电池已接入 */
                     {
                         uart_1_wire_reset_link();
                         ch_set_state(BMS_HANDSHAKE, "插电池");
                     }
                 }
-                else if(val.vout > vRESET)
+                else 
                 {
                     s_cut[0] = 0U;
-                    if(s_cut[1] == 0U)
-                    {
-                        s_idle_low_last_mv = val.vout;
-                        s_cut[1] = 1U;
-                    }
-                    else
-                    {
-                        if(((val.vout > s_idle_low_last_mv) &&
-                            ((u16)(val.vout - s_idle_low_last_mv) > 100U)) ||
-                           ((s_idle_low_last_mv > val.vout) &&
-                            ((u16)(s_idle_low_last_mv - val.vout) > 100U))) /* 100mV以内才认为稳定 */
-                        {
-                            s_cut[1] = 1U;
-                        }
-                        else if(s_cut[1] < 200U) /* 2秒低压稳定确认 */
-                        {
-                            s_cut[1]++;
-                        }
-
-                        s_idle_low_last_mv = val.vout;
-                        if(s_cut[1] >= 200U)
-                        {
-                            ch_set_state(CH_UVP, "电池低压");
-                        }
-                    }
-                }
-                else
-                {
-                    s_cut[0] = 0U;
-                    s_cut[1] = 0U;
-                    s_idle_low_last_mv = 0U;
                 }
                 break;
 
@@ -729,14 +690,10 @@ void usr_ch_func(void)
                 }
                 else if(val.vout < vSTART)
                 {
-                    if(++s_cut[0] >= 50U)        /* 500ms确认握手期间低压 */
-                    {
-                        ch_set_state(CH_UVP, "握手低压");
-                    }
+                     ch_set_state(CH_UVP, "握手低压");
                 }
                 else
                 {
-                    s_cut[0] = 0U;
                     if(u1w_info.comm_timeout != 0U)
                     {
                         ch_set_state(BMS_ERR, "BMS通信超时");
@@ -830,8 +787,8 @@ void usr_ch_func(void)
                 DCJK = 0;
                 REPAIR_OUTPUT = 1;
                 VADJ = 0;
-                FAN = 1;
-                Ged_Flash(50);
+                FAN = 0;
+                Ged_Flash(100);
                 TimCut();
                 set_Curr_Duty(PWMMAX/2);       /* Keep primary/opto current loop alive; not repair current control. */
                 if(Tim.min >= TIM_PRE)
@@ -840,7 +797,7 @@ void usr_ch_func(void)
                 }
                 else if(val.vout >= vPRE_30V)
                 {
-                    if(++s_cut[0] >= 50U)        /* 500ms确认修复完成 */
+                    if(++s_cut[0] >= 300U)        /* 3000ms确认修复完成 */
                     {
                         ch_set_state(CH_Pre1, "修复完成");
                     }
@@ -865,6 +822,7 @@ void usr_ch_func(void)
                     adc_sample_all();
                     if(++s_remove_cnt > 2U)       /* 打开20ms后，用当前ADC换算值确认 */
                     {
+                        
                         if(val.vout < vRESET)
                         {
                             uart_1_wire_reset_link();
@@ -914,7 +872,7 @@ void usr_ch_func(void)
                 REPAIR_OUTPUT = 0;
                 VADJ = 1;
                 FAN = 1;
-                Ged_Flash(50);
+                Ged_Flash(100);
                 TimCut();
                 set_Curr_Duty(SET_CURR(iPRE));
                 pre_end_voltage_mv = ch_get_pre_end_voltage_mv();
@@ -934,7 +892,21 @@ void usr_ch_func(void)
                 {
                     s_cut[0] = 0;
                 }
+                
+                if(val.vout < vSTART)
+                {
+                    if(++s_cut[1] >= 50U)        /* 500ms确认电池低压 */
+                    {
+                        ch_set_state(CH_UVP, "电池低压");
+                    }
+                }
+                else
+                {
+                    s_cut[1] = 0U;
+                }
                 break;
+                
+                
 
             case CH_CCCV:
                 /*
@@ -1001,10 +973,10 @@ void usr_ch_func(void)
                 VADJ = 1;
                 FAN = 1;
                 RLED = 0;
-                Ged_Flash(50);
+                Ged_Flash(100);
                 TimCut();
 
-                target_current_ma = ch_get_cccv_work_current_ma(target_current_ma);
+                target_current_ma = ch_get_cccv_work_current_ma(target_current_ma);   // 达到 4.195V 后开始缓慢降流
                 set_Curr_Duty(SET_CURR(target_current_ma));
                 cccv_timeout_min = ch_get_cccv_timeout_min(target_current_ma);
 
@@ -1078,8 +1050,7 @@ void usr_ch_func(void)
                             ch_set_state(CH_IDLE, "拔电池");
                         }
                     }
-                    else if(((uart_1_wire.cell_max_mv != 0U) && (uart_1_wire.cell_max_mv < CELL_RECHG_MV)) ||
-                            ((uart_1_wire.cell_max_mv == 0U) && (val.vout < vCH60)))
+                    else if (val.vout < vCH60)
                     {
                         s_remove_cnt = 0U;
                         if(++s_cut[0] >= 2U)          /* Prefer B1 max cell; fallback to pack voltage only without B1. */
@@ -1101,7 +1072,7 @@ void usr_ch_func(void)
                 uart_1_wire_set_stage(U1W_STAGE_TEMP_WAIT);
                 uart_1_wire_poll_10ms();
                 ch_output_all_off();
-                RGed_Flash(50);
+                RGed_Flash(100);
                 goto stopped_state_probe;
 
             case BMS_ERR:
@@ -1114,7 +1085,7 @@ void usr_ch_func(void)
                 uart_1_wire_set_stage(U1W_STAGE_PULL_LOW);
                 uart_1_wire_poll_10ms();
                 ch_output_all_off();
-                Red_Flash(50);
+                Red_Flash(100);
                 goto stopped_state_probe;
 
             case CH_OTP:
@@ -1124,7 +1095,7 @@ void usr_ch_func(void)
                 uart_1_wire_set_stage(U1W_STAGE_PULL_LOW);
                 uart_1_wire_poll_10ms();
                 ch_output_all_off();
-                RGed_Flash(50);
+                RGed_Flash(100);
 
 stopped_state_probe:
                 vout_valid = 0U;
@@ -1199,22 +1170,22 @@ stopped_state_probe:
 
             case CH_AGING:
                 /* 老化：强制满功率输出，分压常开，便于观察电压电流。 */
-                uart_1_wire_set_stage(U1W_STAGE_STOP);
+                uart_1_wire_set_stage(U1W_STAGE_HANDSHAKE);
                 uart_1_wire_poll_10ms();
                 BATT_DIVIDER_EN = 1;
                 adc_sample_all();
-                ch_err_ck();
-                if(ch_check_protect_state() != 0)
-                {
-                    ch_output_all_off();
-                    break;
-                }
+//                ch_err_ck();
+//                if(ch_check_protect_state() != 0)
+//                {
+//                    ch_output_all_off();
+//                    break;
+//                }
 
                 DCJK = 1;
                 VADJ = 1;
                 FAN = 1;
                 set_Curr_Duty(SET_CURR(iMAX));
-                Ged_Flash(50);
+                Ged_Flash(100);
                 break;
             }
 

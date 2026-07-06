@@ -43,10 +43,10 @@
 #define CELL_FULL_MV                (4200U)                  /* 单节满电目标电压，单位：mV */
 #define CELL_RECHG_MV               (4000U)                  /* 单节回充参考电压，单位：mV */
 #define vRESET                      (1000U)                  /* 输出复位/掉电判断参考，单位：mV */
-#define vSTART                      (CELL_LOW_MV * BAT_SERIES)     /* 起充最低包电压，单位：mV */
-#define vPRE_30V                    (CELL_REPAIR_MV * BAT_SERIES)  /* 低压修复/预充参考包电压，单位：mV */
-#define vPRE_37V5                   (CELL_PRE_MV * BAT_SERIES)     /* 预充转正常充电参考包电压，单位：mV */
-#define vCH60                       (CELL_RECHG_MV * BAT_SERIES)   /* 回充参考包电压，单位：mV */
+#define vSTART                      (15000)                  /* 起充最低包电压，单位：mV */
+#define vPRE_30V                    (30000)                  /* 低压修复/预充参考包电压，单位：mV */
+#define vPRE_37V5                   (37500)                  /* 预充转正常充电参考包电压，单位：mV */
+#define vCH60                       (60000)                  /* 回充参考包电压，单位：mV */
 #define SET_vMAX                    (63000U)                 /* 默认恒压设定，单位：mV */
 #define vDCOVP                      (64500U)                 /* 输出过压保护阈值，单位：mV */
 #define iREPAIR                     (100U)                   /* 低压修复电流，单位：mA */

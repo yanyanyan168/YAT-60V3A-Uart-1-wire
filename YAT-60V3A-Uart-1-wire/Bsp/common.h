@@ -13,6 +13,7 @@ extern "C" {
 #include "include.h"
 #include "usr_cfg.h"
 #include <stdio.h>
+    
 typedef enum
 {
     BSP_OK = 0,
@@ -21,11 +22,13 @@ typedef enum
     BSP_ERR_PARAM = 3,
     BSP_ERR_OVERFLOW = 4,
 } BSP_RESULT_Types;
+
 typedef enum
 {
     UART_1WIRE_DIR_RX = 0,
     UART_1WIRE_DIR_TX = 1,
 } UART_1WIRE_DIR_Types;
+
 typedef struct
 {
     u8 ch_ntcErr : 1;
@@ -36,6 +39,7 @@ typedef struct
     u8 ch_vacErr : 1;
     u8 ch_hard   : 1;
 } FLAG_Types;
+
 typedef struct
 {
     u8 ms;
@@ -64,11 +68,13 @@ typedef enum
     CH_REPAIR,      /* 超低压修复：继电器断开，通过修复输出限流充电 */
     CH_AGING,
 } CH_STATUS_Types;
+
 #define usr_printf                         printf
 #define uart_printf                        printf
 #define ARRAY_SIZE(a)                      (sizeof(a) / sizeof((a)[0]))
 #define BSP_MIN(a, b)                      (((a) < (b)) ? (a) : (b))
 #define BSP_MAX(a, b)                      (((a) > (b)) ? (a) : (b))
+
 void memclr(void *addr, u16 len);
 u16 common_clamp_u16(u16 val, u16 min_val, u16 max_val);
 u8 common_sum_u8(u8 *buf, u8 len);

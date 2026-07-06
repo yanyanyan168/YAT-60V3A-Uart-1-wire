@@ -33,7 +33,7 @@
 void gpio_init(void)
 {
 //    gpio_pull_default();
-    DUMMY_LOAD = 0;
+    DUMMY_LOAD = 1;
     DCJK = 0;
     REPAIR_OUTPUT = 0;
     BATT_DIVIDER_EN = 0;

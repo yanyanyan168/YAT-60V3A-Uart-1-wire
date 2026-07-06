@@ -42,7 +42,7 @@ void ch_uart_set_baud(u32 baud)
 }
  
 /* 初始化UART0（调试通道） */
-void ch_uart_init(void)
+void ch_uart_init(u32 baud)
 {
     DEBUG_TX_OUTPUT();             // 配置P25为推挽输出模式
     DEBUG_RX_INPUT();              // 配置P24为输入模式
@@ -50,7 +50,7 @@ void ch_uart_init(void)
     FIN_S7 = GPIO_FIN_SEL_P24;     // 将P24输入功能复用选择为 UART0_RX
     
     __DisableIRQ(UART0_IRQn);      // 配置期间关闭UART0中断
-    ch_uart_set_baud(DBG_BAUD);    // 设置调试波特率
+    ch_uart_set_baud(baud);    // 设置调试波特率
     
     // 配置UART0控制寄存器:
     // UART_STOP_BIT(0x0) : 0x0对应1bit停止位
@@ -233,6 +233,6 @@ BSP_RESULT_Types com_uart_send_buf(u8 *buf, u8 len)
 /* 初始化所有UART通道 */
 void uart_init(void)
 {
-    ch_uart_init();   // 初始化UART0 (调试通道)
+    ch_uart_init(DBG_BAUD);   // 初始化UART0 (调试通道)
     com_uart_init();  // 初始化UART1 (通信通道)
 }

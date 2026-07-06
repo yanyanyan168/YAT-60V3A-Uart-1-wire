@@ -56,7 +56,6 @@ typedef enum
 typedef struct
 {
     s16 vout;              /* 电池电压采样原始 ADC，AIN3/P03 */
-    s16 vdc;               /* 兼容 54.6V 字段，本项目镜像 vout */
     s16 curr;              /* 电流采样原始 ADC，AIN8/P10 */
     u16 i_ntc;             /* NTC 原始 ADC，AIN1/P05 */
 } ADC_Type;
@@ -64,7 +63,6 @@ typedef struct
 typedef struct
 {
     u16 vout;              /* 电池电压，单位 mV */
-    u16 vdc;               /* 兼容 54.6V 字段，本项目镜像 vout，单位 mV */
     u16 curr;              /* 充电电流，单位 mA */
     s32 i_ntc;             /* NTC 温度，沿用 54.6V NTC 表返回单位 */
 } VAL_Type;
@@ -75,9 +73,8 @@ extern xdata VAL_Type val;
 void adc_init(void);
 #define ADC_Init()                        adc_init()
 u16 Get_ADC_Channel(ADC_Channel channel);
-u16 adc_read_raw(ADC_Channel channel);
 void adc_sample_all(void);
-void get_adc(void);
+
 
 u16 cal_Vout(void);
 u16 cal_Curr(void);

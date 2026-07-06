@@ -249,6 +249,8 @@ void TimCut(void)
         }
     }
 }
+
+
 void Red_Flash(u8 period_n10ms)
 {
     static u8 idata cut_10ms;
@@ -263,6 +265,7 @@ void Red_Flash(u8 period_n10ms)
         RLED = !RLED;
     }
 }
+
 void Ged_Flash(u8 period_n10ms)
 {
     static u8 idata cut_10ms;
@@ -277,6 +280,7 @@ void Ged_Flash(u8 period_n10ms)
         GLED = !GLED;
     }
 }
+
 void RGed_Flash(u8 period_n10ms)
 {
     static u8 idata cut_10ms;

@@ -16,7 +16,6 @@ typedef struct
     u16 I4_adc;
 
     u16 Vo_V1_adc;
-    u16 Vdc_V1_adc;
     u16 V1_val;
 
     u16 I1_adc;
@@ -29,19 +28,8 @@ typedef struct
     u16 I3_val;
 
     u16 Vo_V2_adc;
-    u16 Vdc_V2_adc;
     u16 V2_val;
 
-    u16 Vo_V3_adc;
-    u16 Vdc_V3_adc;
-    u16 V3_val;
-
-    u16 Vo_V4_adc;
-    u16 Vdc_V4_adc;
-    u16 V4_val;
-
-    u16 cv_pwm;
-    u16 cv_val;
     u16 cc_pwm;
     u16 cc_val;
 } CAL_VAL_Types;
