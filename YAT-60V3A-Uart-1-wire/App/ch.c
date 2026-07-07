@@ -39,6 +39,7 @@ static u8  idata s_remove_cnt;                /* 拔电池确认计数。 */
 static u16 idata s_no_current_cnt;             /* 充电中有压无流异常确认计数。 */
 static u16 idata s_vout_probe_period_10ms;    /* 满电/异常时分压检测间隔计数。 */
 static u8  idata s_vout_probe_on_10ms;        /* 满电/异常时分压检测开窗计数。 */
+static bit s_full_recharge;                  /* 满电回充复检阶段保持满电显示。 */
 u16 idata s_dummy_load_10ms;                   /* DUMMY_LOAD hold counter, unit 10ms. */
 
 u16 idata cccv_timeout_min;
@@ -166,6 +167,20 @@ static u16 ch_get_pack_mv(u16 cell_mv)
     }
 
     return (u16)(cell_mv * (u16)series);
+}
+
+static void ch_set_wait_led(void)
+{
+    if(s_full_recharge != 0)
+    {
+        RLED = 0;
+        GLED = 1;
+    }
+    else
+    {
+        RLED = 1;
+        GLED = 0;
+    }
 }
 
 
@@ -611,6 +626,11 @@ void usr_ch_func(void)
                 Tim.s = 0;
                 Tim.min = 0;
 
+                if((ch_state != BMS_HANDSHAKE) && (ch_state != CH_Check))
+                {
+                    s_full_recharge = 0;
+                }
+
                 if(ch_state == CH_CCCV)
                 {
                     s_cccv_curr_limit_ma = 0U;
@@ -672,8 +692,7 @@ void usr_ch_func(void)
                     break;
                 }
 
-                RLED = 1;
-                GLED = 0;
+                ch_set_wait_led();
                 TimCut();
                 if(Tim.s >= 20U)                 /* 握手最多等待20秒 */
                 {
@@ -726,8 +745,7 @@ void usr_ch_func(void)
                     break;
                 }
 
-                RLED = 1;
-                GLED = 0;
+                ch_set_wait_led();
                 if(val.vout < pack_uvp_mv)
                 {
                     if(++s_cut[0] >= 50U)        /* 500ms确认电池低压 */
@@ -1048,8 +1066,9 @@ void usr_ch_func(void)
                         s_remove_cnt = 0U;
                         if(++s_cut[0] >= 2U)          /* Prefer B1 max cell; fallback to pack voltage only without B1. */
                         {
+                            s_full_recharge = 1;
                             uart_1_wire_reset_link();
-                            ch_set_state(BMS_HANDSHAKE, "满电后重新插入");
+                            ch_set_state(BMS_HANDSHAKE, "满电回充");
                         }
                     }
                     else
