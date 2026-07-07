@@ -24,16 +24,18 @@
 #define U1W_CMD_B1                         (0xB1U)    /* 查询最低/最高单节电压 */
 #define U1W_CMD_B3                         (0xB3U)    /* 查询电池温度/MOS温度 */
 #define U1W_CMD_B4                         (0xB4U)    /* 查询SOC和充电状态 */
-#define U1W_CMD_B6                         (0xB6U)    /* 控制电池包 MOS */
+#define U1W_CMD_B6                         (0xB6U)    /* 控制电池包 MOS/LED显示 */
 
 #ifndef U1W_MASTER
 #define U1W_MASTER                         (0x10U)    /* A0 主机类型：充电器 */
 #endif
 #define U1W_CELL_TYPE_21700                 (1U)       /* A1 XX=1表示21700，其他按18650处理 */
 
+#define U1W_B6_TYPE_LED                    (0x00U)    /* B6：LED控制 */
 #define U1W_B6_TYPE_MOS                    (0x01U)    /* B6：MOS控制 */
 #define U1W_B6_TYPE_SOC                    (0x03U)    /* B6：满电显示SOC */
 #define U1W_MOS_CHG_ON                     (0x01U)    /* B6：要求打开充电MOS */
+#define U1W_LED_SHOW_CHARGE                (0x02U)    /* B6：显示充电状态5S */
 
 /* B4 状态位。当前版本只记录，不再用这些位决定 B6 开关。 */
 #define U1W_B4_OV                          (0x01U)

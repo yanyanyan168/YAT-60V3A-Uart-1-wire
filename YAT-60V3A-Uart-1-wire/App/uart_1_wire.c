@@ -30,6 +30,10 @@
 #define U1W_TX_PERIOD_10MS                 (10U)      /* 100ms 发一帧 */
 #endif
 
+#ifndef U1W_LED_KEEP_PERIOD_10MS
+#define U1W_LED_KEEP_PERIOD_10MS           (400U)     /* 充电中每4秒保持一次电池包指示灯 */
+#endif
+
 #ifndef U1W_ANY_RX_TIMEOUT_10MS
 #define U1W_ANY_RX_TIMEOUT_10MS            (100U)     /* 1秒没有任意合法帧 */
 #endif
@@ -70,6 +74,7 @@ typedef struct
     u8  rx_fifo_last_cnt;                   /* 上一次看到的 FIFO 数据量，用于模拟接收空闲 */
     u16 any_rx_age_10ms;                    /* 任意合法帧多久没收到 */
     u16 full_display_10ms;                  /* 满电显示持续时间 */
+    u16 led_keep_10ms;                      /* 充电中保持电池包指示灯计数 */
     u16 key_age_10ms[U1W_KEY_MAX];          /* 关键帧多久没收到 */
 } U1W_CTRL_Types;
 
@@ -536,6 +541,12 @@ static bit u1w_send_frame(u8 cmd)
             s_tx_buf[1] = U1W_B6_TYPE_SOC;
             s_tx_buf[2] = uart_1_wire.soc_percent;
         }
+        else if(s_u1w.led_keep_10ms >= U1W_LED_KEEP_PERIOD_10MS)
+        {
+            s_tx_buf[1] = U1W_B6_TYPE_LED;
+            s_tx_buf[2] = U1W_LED_SHOW_CHARGE;
+            s_u1w.led_keep_10ms = 0U;
+        }
         else
         {
             s_tx_buf[1] = U1W_B6_TYPE_MOS;
@@ -600,6 +611,13 @@ static void u1w_tx_task(void)
 
     /* 节拍到，准备发送本阶段下一帧。 */
     s_u1w.tx_tick_10ms = 0U;
+
+    if(((s_u1w.stage == U1W_STAGE_CHARGE) || (s_u1w.stage == U1W_STAGE_HANDSHAKE)) &&
+       (s_u1w.led_keep_10ms >= U1W_LED_KEEP_PERIOD_10MS))
+    {
+        (void)u1w_send_frame(U1W_CMD_B6);
+        return;
+    }
 
     if(s_u1w.stage == U1W_STAGE_HANDSHAKE)
     {
@@ -685,6 +703,11 @@ static void u1w_age_task_10ms(void)
             s_u1w.full_display_10ms++;
         }
         return;
+    }
+
+    if((s_u1w.stage == U1W_STAGE_CHARGE) && (s_u1w.led_keep_10ms < U1W_LED_KEEP_PERIOD_10MS))
+    {
+        s_u1w.led_keep_10ms++;
     }
 
     /* 任意合法帧超时计数：收到任意合法帧会在接收解析处清零。 */
@@ -826,6 +849,11 @@ void uart_1_wire_set_stage(u8 stage)
     /* 清通信超时相关计数和标志。 */
     s_u1w.any_rx_age_10ms = 0U;
     s_u1w.full_display_10ms = 0U;
+    s_u1w.led_keep_10ms = 0U;
+    if((stage == U1W_STAGE_HANDSHAKE) || (stage == U1W_STAGE_CHARGE))
+    {
+        s_u1w.led_keep_10ms = U1W_LED_KEEP_PERIOD_10MS;
+    }
     uart_1_wire.offline_count_10ms = 0U;
     uart_1_wire.comm_timeout = 0U;
     uart_1_wire.retry_over = 0U;
