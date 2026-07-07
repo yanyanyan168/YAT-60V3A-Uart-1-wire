@@ -81,7 +81,7 @@ static char *u1w_dbg_cmd_name(u8 cmd)
     case U1W_CMD_B1: return "CELLV";
     case U1W_CMD_B3: return "TEMP";
     case U1W_CMD_B4: return "SOC";
-    case U1W_CMD_B6: return "MOS";
+    case U1W_CMD_B6: return "CTRL";
     default:         return "UNK";
     }
 }

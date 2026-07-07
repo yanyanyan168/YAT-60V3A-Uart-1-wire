@@ -10,8 +10,8 @@
   *
   * 2. 发送：不再等待某一帧回复。
   *    ch.c 设置 STOP / HANDSHAKE / CHARGE 阶段后，本文件每 100ms 发一帧。
-  *    HANDSHAKE 阶段轮询 A0/A1/A4/A6/A7/B1/B3/B4。
-  *    CHARGE 阶段轮询 B1/B3/B4/B6，B6 固定要求打开充电 MOS。
+  *    HANDSHAKE 阶段先发 B6 显示充电状态，再轮询 A0/A1/A4/A6/A7/B1/B3/B4。
+  *    CHARGE 阶段轮询 B1/B3/B4/B6，B6 在 LED 显示和充电 MOS 控制间轮换。
   *
   * 3. 超时：
   *    2 秒没有任意合法帧，通信超时。
@@ -28,10 +28,6 @@
 
 #ifndef U1W_TX_PERIOD_10MS
 #define U1W_TX_PERIOD_10MS                 (10U)      /* 100ms 发一帧 */
-#endif
-
-#ifndef U1W_LED_KEEP_PERIOD_10MS
-#define U1W_LED_KEEP_PERIOD_10MS           (400U)     /* 充电中每4秒保持一次电池包指示灯 */
 #endif
 
 #ifndef U1W_ANY_RX_TIMEOUT_10MS
@@ -74,7 +70,7 @@ typedef struct
     u8  rx_fifo_last_cnt;                   /* 上一次看到的 FIFO 数据量，用于模拟接收空闲 */
     u16 any_rx_age_10ms;                    /* 任意合法帧多久没收到 */
     u16 full_display_10ms;                  /* 满电显示持续时间 */
-    u16 led_keep_10ms;                      /* 充电中保持电池包指示灯计数 */
+    u8  b6_next_mos;                        /* B6轮换发送LED显示和充电MOS控制 */
     u16 key_age_10ms[U1W_KEY_MAX];          /* 关键帧多久没收到 */
 } U1W_CTRL_Types;
 
@@ -84,6 +80,7 @@ static u8 idata s_tx_buf[4];
 
 static u8 code s_handshake_cmd[] =
 {
+    U1W_CMD_B6,
     U1W_CMD_A0,
     U1W_CMD_A1,
     U1W_CMD_A4,
@@ -533,24 +530,25 @@ static bit u1w_send_frame(u8 cmd)
     {
         /*
          * B6 是主机控制/显示命令：
-         * 满电显示阶段发送 SOC；
-         * 其他充电阶段固定要求打开充电 MOS。
+         * 满电显示阶段固定发送 100%；
+         * 其他阶段轮换发送 LED 显示和充电 MOS 控制。
          */
         if(s_u1w.stage == U1W_STAGE_FULL_DISPLAY)
         {
             s_tx_buf[1] = U1W_B6_TYPE_SOC;
-            s_tx_buf[2] = uart_1_wire.soc_percent;
+            s_tx_buf[2] = 100U;
         }
-        else if(s_u1w.led_keep_10ms >= U1W_LED_KEEP_PERIOD_10MS)
+        else if(s_u1w.b6_next_mos == 0U)
         {
             s_tx_buf[1] = U1W_B6_TYPE_LED;
             s_tx_buf[2] = U1W_LED_SHOW_CHARGE;
-            s_u1w.led_keep_10ms = 0U;
+            s_u1w.b6_next_mos = 1U;
         }
         else
         {
             s_tx_buf[1] = U1W_B6_TYPE_MOS;
             s_tx_buf[2] = U1W_MOS_CHG_ON;  
+            s_u1w.b6_next_mos = 0U;
         }
 
         s_tx_buf[3] = u1w_sum(s_tx_buf, 3U);
@@ -612,16 +610,9 @@ static void u1w_tx_task(void)
     /* 节拍到，准备发送本阶段下一帧。 */
     s_u1w.tx_tick_10ms = 0U;
 
-    if(((s_u1w.stage == U1W_STAGE_CHARGE) || (s_u1w.stage == U1W_STAGE_HANDSHAKE)) &&
-       (s_u1w.led_keep_10ms >= U1W_LED_KEEP_PERIOD_10MS))
-    {
-        (void)u1w_send_frame(U1W_CMD_B6);
-        return;
-    }
-
     if(s_u1w.stage == U1W_STAGE_HANDSHAKE)
     {
-        /* 握手阶段：循环发送 A0/A1/A4/A6/A7/B1/B3/B4。 */
+        /* 握手阶段：先发B6显示充电状态，再轮询 A0/A1/A4/A6/A7/B1/B3/B4。 */
         list_len = (u8)ARRAY_SIZE(s_handshake_cmd);
         if(s_u1w.tx_index >= list_len)
         {
@@ -646,7 +637,7 @@ static void u1w_tx_task(void)
     else if(s_u1w.stage == U1W_STAGE_FULL_DISPLAY)
     {
         /*
-         * 满电显示阶段：周期发送 B6 显示 SOC。
+         * 满电显示阶段：周期发送 B6 显示 100%。
          * 到达 3 分钟后，主动拉低 COM，通知 BMS 主机结束通信。
          */
         if(s_u1w.full_display_10ms >= U1W_FULL_DISPLAY_10MS)
@@ -705,10 +696,6 @@ static void u1w_age_task_10ms(void)
         return;
     }
 
-    if((s_u1w.stage == U1W_STAGE_CHARGE) && (s_u1w.led_keep_10ms < U1W_LED_KEEP_PERIOD_10MS))
-    {
-        s_u1w.led_keep_10ms++;
-    }
 
     /* 任意合法帧超时计数：收到任意合法帧会在接收解析处清零。 */
     if(s_u1w.any_rx_age_10ms < U1W_ANY_RX_TIMEOUT_10MS)
@@ -849,11 +836,7 @@ void uart_1_wire_set_stage(u8 stage)
     /* 清通信超时相关计数和标志。 */
     s_u1w.any_rx_age_10ms = 0U;
     s_u1w.full_display_10ms = 0U;
-    s_u1w.led_keep_10ms = 0U;
-    if((stage == U1W_STAGE_HANDSHAKE) || (stage == U1W_STAGE_CHARGE))
-    {
-        s_u1w.led_keep_10ms = U1W_LED_KEEP_PERIOD_10MS;
-    }
+    s_u1w.b6_next_mos = 0U;
     uart_1_wire.offline_count_10ms = 0U;
     uart_1_wire.comm_timeout = 0U;
     uart_1_wire.retry_over = 0U;

@@ -64,7 +64,7 @@ typedef enum
     U1W_STAGE_STOP = 0U,                    /* 不通信，释放 COM */
     U1W_STAGE_HANDSHAKE,                    /* 轮询 A0/A1/A4/A6/A7/B1/B3/B4 */
     U1W_STAGE_CHARGE,                       /* 轮询 B1/B3/B4/B6，B6要求开MOS */
-    U1W_STAGE_FULL_DISPLAY,                 /* 满电后发送B6 03 SOC，3分钟后拉低COM */
+    U1W_STAGE_FULL_DISPLAY,                 /* 满电后发送B6 03 100，3分钟后拉低COM */
     U1W_STAGE_TEMP_WAIT,                    /* 温度异常等待恢复，继续轮询B3/B4 */
     U1W_STAGE_PULL_LOW                      /* 主动拉低COM，告知BMS主机断开 */
 } UART_1WIRE_STAGE_Types;

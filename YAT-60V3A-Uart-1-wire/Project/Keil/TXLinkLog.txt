@@ -64,3 +64,5 @@
 [07-07 17:08:05]FreeCache: 0x0
 [07-07 17:08:05]StopTarget: 0x0
 [07-07 17:08:05]FreeCache: 0x0
+[07-07 20:37:46]DllUv3Cap:0x2
+[07-07 20:37:46]DllUv3Cap:0x64
