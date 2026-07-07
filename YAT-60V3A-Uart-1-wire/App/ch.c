@@ -154,7 +154,8 @@ static bit ch_check_protect_state(void)
 
 
 
-static u8 ch_get_valid_series(void)
+// 获取电池包电压阈值，单位：mV。
+static u16 ch_get_pack_mv(u16 cell_mv)
 {
     u8 series;
 
@@ -164,38 +165,7 @@ static u8 ch_get_valid_series(void)
         series = BAT_SERIES;
     }
 
-    return series;
-}
-
-
-// 获取电池包欠压保护阈值，单位：mV。
-static u16 ch_get_pack_uvp_mv(void)
-{
-    return (u16)((u16)CELL_1000MV * (u16)ch_get_valid_series());
-}
-
-// 修复成功
-static u16 ch_get_pack_repair_mv(void)
-{
-    return (u16)((u16)CELL_2000MV * (u16)ch_get_valid_series());
-}
-
-// 预充转恒流
-static u16 ch_get_pack_pre_mv(void)
-{
-    return (u16)((u16)CELL_2500MV * (u16)ch_get_valid_series());
-}
-
-// 上电认为满电满电
-static u16 ch_get_full_mv(void)
-{
-    return (u16)((u16)CELL_4100MV * (u16)ch_get_valid_series());
-}
-
-// 回充电压
-static u16 ch_get_recharge_mv(void)
-{
-    return (u16)((u16)CELL_4000MV * (u16)ch_get_valid_series());
+    return (u16)(cell_mv * (u16)series);
 }
 
 
@@ -533,13 +503,15 @@ static bit ch_bms_status_check(void)
   */
 static bit ch_no_current_fault_check_10ms(u16 target_voltage_mv, u16 target_current_ma, u8 full_margin_en)
 {
+    u16 no_current_ma;
+
     if((uart_1_wire.comm_timeout != 0U) || (uart_1_wire.no_rx_10ms >= 100U))  /* 1秒无一线帧时交给拔电池/通信异常判断 */
     {
         s_no_current_cnt = 0U;
         return 0;
     }
 
-    if(((u16)Tim.s * 100U + (u16)Tim.ms) < 200U)  /* 充电开始2秒内不判 */
+    if(((u16)Tim.s * 100U + (u16)Tim.ms) < 100U)  /* 充电开始1秒内不判 */
     {
         s_no_current_cnt = 0U;
         return 0;
@@ -551,17 +523,24 @@ static bit ch_no_current_fault_check_10ms(u16 target_voltage_mv, u16 target_curr
         return 0;
     }
 
+    if(target_current_ma <= 200U)
+    {
+        no_current_ma = 30U;     /* 修复小电流 */
+    }
+    else
+    {
+        no_current_ma = 100U;    /* 预充/CCCV */
+    }
+
     if((full_margin_en != 0U) && (((u32)val.vout + 500U) >= target_voltage_mv))  /* 距目标电压500mV内，按满电末端处理 */
     {
         s_no_current_cnt = 0U;
         return 0;
     }
 
-    if((val.vout > pack_uvp_mv) &&
-       (((target_current_ma <= 200U) && (val.curr < 30U)) ||    /* 修复小电流：小于30mA才认为无流 */
-        ((target_current_ma > 200U) && (val.curr < 100U))))     /* 预充/CCCV：小于100mA认为无流 */
+    if((val.vout > pack_uvp_mv) && (val.curr < no_current_ma))
     {
-        if(++s_no_current_cnt >= 300U)                          /* 连续3秒有压无流 */
+        if(++s_no_current_cnt >= 100U)                          /* 连续1秒有压无流 */
         {
             ch_output_all_off();
             s_no_current_cnt = 0U;
@@ -664,7 +643,7 @@ void usr_ch_func(void)
 
                 RLED = 1;
                 GLED = 0;
-                if(val.vout >= vRESET)
+                if(val.vout > vRESET)
                 {
                     if(++s_cut[0] >= 100U)        /* 1000ms确认电池已接入 */
                     {
@@ -712,11 +691,11 @@ void usr_ch_func(void)
                     }
                     else if(uart_1_wire.handshake_ok != 0U)
                     {
-                        pack_uvp_mv          = ch_get_pack_uvp_mv();
-                        pack_repair_mv       = ch_get_pack_repair_mv();
-                        pack_pre_to_cc_mv    = ch_get_pack_pre_mv();
-                        pack_poweron_full_mv = ch_get_full_mv();
-                        pack_recharge_mv     = ch_get_recharge_mv();
+                        pack_uvp_mv          = ch_get_pack_mv(CELL_1000MV);
+                        pack_repair_mv       = ch_get_pack_mv(CELL_2000MV);
+                        pack_pre_to_cc_mv    = ch_get_pack_mv(CELL_2500MV);
+                        pack_poweron_full_mv = ch_get_pack_mv(CELL_4100MV);
+                        pack_recharge_mv     = ch_get_pack_mv(CELL_4000MV);
                         ch_get_cccv_timeout_min();
                         pc_uart_print_batt();
                         
@@ -844,45 +823,22 @@ void usr_ch_func(void)
                 s_dummy_load_10ms = 500U;
                 uart_1_wire_set_stage(U1W_STAGE_CHARGE);
                 uart_1_wire_poll_10ms();
-                if(s_remove_cnt != 0U)
-                {
-                    ch_output_all_off();
-                    BATT_DIVIDER_EN = 1;          /* 拔电池确认只开分压，不开输出 */
-                    adc_sample_all();
-                    if(++s_remove_cnt > 2U)       /* 打开20ms后，用当前ADC换算值确认 */
-                    {
-                        
-                        if(val.vout < vRESET)
-                        {
-                            uart_1_wire_reset_link();
-                            s_vout_probe_period_10ms = 100U;
-                            s_vout_probe_on_10ms = 0U;
-                            ch_set_state(CH_IDLE, "拔电池");
-                        }
-                        else
-                        {
-                            s_remove_cnt = 0U;
-                            ch_set_state(BMS_ERR, "拔出异常");
-                        }
-                    }
-                    break;
-                }
 
                 BATT_DIVIDER_EN = 1;
                 adc_sample_all();
                 ch_err_ck();
+                if(val.vout < vRESET)
+                {
+                    uart_1_wire_reset_link();
+                    ch_set_state(CH_IDLE, "拔电池");
+                    break;
+                }
                 if(ch_check_protect_state() != 0)
                 {
                     ch_output_all_off();
                     break;
                 }
-                if((val.curr < iGED) && (uart_1_wire.no_rx_10ms >= 100U)) /* 小电流且1秒无一线帧，疑似拔电池 */
-                {
-                    ch_output_all_off();
-                    BATT_DIVIDER_EN = 1;
-                    s_remove_cnt = 1U;
-                    break;
-                }
+
                 if(ch_no_current_fault_check_10ms(target_voltage_mv, iPRE, 0U) != 0)  /* 预充实际按 iPRE 输出，不能因协议目标电流偏小而漏判 */
                 {
                     break;
@@ -900,7 +856,7 @@ void usr_ch_func(void)
                 DCJK = 1;
                 REPAIR_OUTPUT = 0;
                 VADJ = 1;
-                FAN = 1;
+                FAN = (val.curr > iPRE/2) ? 1 : 0;
                 Ged_Flash(100);
                 TimCut();
                 set_Curr_Duty(SET_CURR(iPRE));
@@ -945,32 +901,16 @@ void usr_ch_func(void)
                 s_dummy_load_10ms = 500U;
                 uart_1_wire_set_stage(U1W_STAGE_CHARGE);
                 uart_1_wire_poll_10ms();
-                if(s_remove_cnt != 0U)
-                {
-                    ch_output_all_off();
-                    BATT_DIVIDER_EN = 1;          /* 拔电池确认只开分压，不开输出 */
-                    adc_sample_all();
-                    if(++s_remove_cnt > 2U)       /* 打开20ms后，用当前ADC换算值确认 */
-                    {
-                        if(val.vout < vRESET)
-                        {
-                            uart_1_wire_reset_link();
-                            s_vout_probe_period_10ms = 100U;
-                            s_vout_probe_on_10ms = 0U;
-                            ch_set_state(CH_IDLE, "拔电池");
-                        }
-                        else
-                        {
-                            s_remove_cnt = 0U;
-                            ch_set_state(BMS_ERR, "拔出异常");
-                        }
-                    }
-                    break;
-                }
 
                 BATT_DIVIDER_EN = 1;
                 adc_sample_all();
                 ch_err_ck();
+                if(val.vout < vRESET)
+                {
+                    uart_1_wire_reset_link();
+                    ch_set_state(CH_IDLE, "拔电池");
+                    break;
+                }
                 
                 if(s_cut[0] == 50)
                 {
@@ -1008,13 +948,7 @@ void usr_ch_func(void)
                     ch_output_all_off();
                     break;
                 }
-                if((val.curr < iGED) && (uart_1_wire.no_rx_10ms >= 100U)) /* 小电流且1秒无一线帧，疑似拔电池 */
-                {
-                    ch_output_all_off();
-                    BATT_DIVIDER_EN = 1;
-                    s_remove_cnt = 1U;
-                    break;
-                }
+
                 if(ch_no_current_fault_check_10ms(target_voltage_mv, s_cccv_curr_limit_ma, 1U) != 0)
                 {
                     break;
@@ -1032,7 +966,7 @@ void usr_ch_func(void)
                 DCJK = 1;
                 REPAIR_OUTPUT = 0;
                 VADJ = 1;
-                FAN = 1;
+                FAN = (val.curr > iGED/2) ? 1 : 0;
                 RLED = 0;
                 Ged_Flash(100);
                 TimCut();
@@ -1140,6 +1074,7 @@ void usr_ch_func(void)
             case CH_UVP:
             case CH_OVP:
             case CH_OCP:
+            case HW_ERR:
                 /* 通信/超时/电压电流保护：输出关闭，周期短开分压；拔电池后回待机。 */
                 uart_1_wire_set_stage(U1W_STAGE_PULL_LOW);
                 uart_1_wire_poll_10ms();
@@ -1149,7 +1084,6 @@ void usr_ch_func(void)
 
             case CH_OTP:
             case NTC_ERR:
-            case HW_ERR:
                 /* 温度/NTC/硬件异常：输出关闭，周期短开分压；拔电池或温度恢复后处理。 */
                 uart_1_wire_set_stage(U1W_STAGE_PULL_LOW);
                 uart_1_wire_poll_10ms();
