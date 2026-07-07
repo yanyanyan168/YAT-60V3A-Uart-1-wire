@@ -43,6 +43,13 @@ u16 idata s_dummy_load_10ms;                   /* DUMMY_LOAD hold counter, unit 
 
 u16 idata cccv_timeout_min;
 
+
+static u16 idata pack_uvp_mv;             // 电池包欠压保护阈值
+static u16 idata pack_repair_mv;          // 电池包欠压修复成功阈值
+static u16 idata pack_pre_to_cc_mv;       // 预充转恒流阈值
+static u16 idata pack_poweron_full_mv;    // 上电满电判断阈值
+static u16 idata pack_recharge_mv;        // 回充电压阈值
+
 #define CH_BMS_TEMP_MASK             (U1W_B4_LOW_TEMP | U1W_B4_HIGH_TEMP | U1W_B4_MOS_HOT)
 #define CH_BMS_ERR_MASK              (U1W_B4_OCP | U1W_B4_SHORT | U1W_B4_TIMEOUT | U1W_B4_FAIL)
 
@@ -145,79 +152,6 @@ static bit ch_check_protect_state(void)
     return 0;
 }
 
-///**
-//  * @brief  获取 CCCV 阶段实际使用的目标电流，单位：mA。
-//  * @param  target_current_ma  协议和本机限幅后的目标电流。
-//  *
-//  * @note   降流条件：
-//  *         当 B1 上报的最高单节电压 cell_max_mv >= 4.195V 时，
-//  *         认为电池已经接近满充，需要缓慢降低充电电流。
-//  *
-//  * @note   降流速度：
-//  *         每 0.2 秒最多降低 0.1A，避免在 10ms 任务周期内连续快速降流。
-//  *
-//  * @note   电流下限：
-//  *         最低只降到 iGED，不会降到 0。
-//  *         iGED 是满电/转灯电流，继续低于该值意义不大。
-//  *
-//  * @note   恢复策略：
-//  *         如果最高单节电压低于 4.195V，本函数只停止继续降流，
-//  *         不主动升流，避免在阈值附近反复升降造成电流抖动。
-//  *
-//  * @retval 本次 CCCV 实际使用的目标电流，单位 mA。
-//  */
-//static u16 ch_get_cccv_work_current_ma(void)
-//{
-//    /*
-//     * 初次进入 CCCV 时，s_cccv_curr_limit_ma 为 0，
-//     * 先使用协议/本机限幅后的目标电流。
-//     *
-//     * 如果协议目标电流变小，则同步降低当前限流值，
-//     * 防止动态限流值高于新的协议目标值。
-//     */
-//    if((s_cccv_curr_limit_ma == 0U) || (s_cccv_curr_limit_ma >  uart_1_wire.target_current_ma))
-//    {
-//        s_cccv_curr_limit_ma =  uart_1_wire.target_current_ma;
-//        s_cccv_derate_cnt = 0U;
-//    }
-
-//    /*
-//     * B1 上报最高单节电压达到 4.195V 后开始缓慢降流。
-//     */
-//    if(uart_1_wire.cell_max_mv >= (4195U))  /* 4.195V */
-//    {
-//        /*
-//         * 10ms 调用一次，累计 20 次约等于 0.2 秒。
-//         * 未到时间前不降流。
-//         */
-//        if(s_cccv_derate_cnt < 20)
-//        {
-//            s_cccv_derate_cnt++;
-//        }
-//        else
-//        {
-//            s_cccv_derate_cnt = 0U;
-
-//            /*
-//             * 每次降低 100mA，最低限制到 iGED。
-//             */
-//            if(s_cccv_curr_limit_ma > (u16)(iGED + 500))
-//            {
-//                s_cccv_curr_limit_ma -= 500;
-//            }
-//        }
-//    }
-//    else
-//    {
-//        /*
-//         * 低于 4.195V 时，不继续降流；
-//         * 也不主动升流，避免电压在阈值附近抖动时电流来回变化。
-//         */
-//        s_cccv_derate_cnt = 0U;
-//    }
-
-//    return s_cccv_curr_limit_ma;
-//}
 
 
 static u8 ch_get_valid_series(void)
@@ -233,23 +167,37 @@ static u8 ch_get_valid_series(void)
     return series;
 }
 
-/**
-  * @brief  获取电池包欠压保护阈值，单位：mV。
-  */
+
+// 获取电池包欠压保护阈值，单位：mV。
 static u16 ch_get_pack_uvp_mv(void)
 {
-    return (u16)((u16)CELL_LOW_MV * (u16)ch_get_valid_series());
+    return (u16)((u16)CELL_1000MV * (u16)ch_get_valid_series());
 }
 
+// 修复成功
 static u16 ch_get_pack_repair_mv(void)
 {
-    return (u16)((u16)CELL_REPAIR_MV * (u16)ch_get_valid_series());
+    return (u16)((u16)CELL_2000MV * (u16)ch_get_valid_series());
 }
 
+// 预充转恒流
 static u16 ch_get_pack_pre_mv(void)
 {
-    return (u16)((u16)CELL_PRE_MV * (u16)ch_get_valid_series());
+    return (u16)((u16)CELL_2500MV * (u16)ch_get_valid_series());
 }
+
+// 上电认为满电满电
+static u16 ch_get_full_mv(void)
+{
+    return (u16)((u16)CELL_4100MV * (u16)ch_get_valid_series());
+}
+
+// 回充电压
+static u16 ch_get_recharge_mv(void)
+{
+    return (u16)((u16)CELL_4000MV * (u16)ch_get_valid_series());
+}
+
 
 /**
   * @brief  获取预充结束电压，单位：mV。
@@ -258,7 +206,7 @@ static u16 ch_get_pack_pre_mv(void)
   *         用于判断预充阶段什么时候结束，什么时候可以进入 CCCV 阶段。
   *
   * @note   数据来源：
-  *         1. 优先使用 A4 协议下发的单节预充截止电压 cell_pre_mv。
+  *         1. 优先使用 A4 协议下发的单节预充截止电压 CELL_2500MV。
   *         2. 根据 A0 协议下发的串数 cell_series，换算成整包预充结束电压。
   *         3. 如果协议数据异常，则回退使用 2.5V*N。
   *
@@ -302,16 +250,16 @@ static u16 ch_get_pre_end_voltage_mv(void)
      *  3000 表示 3.000V/节
      *
      * 合理范围限制在：
-     *  CELL_REPAIR_MV 2V ~ CELL_FULL_MV 4.2V
+     *  CELL_2000MV 2V ~ CELL_FULL_MV 4.2V
      *
      * 如果低于修复电压，说明值太低；
      * 如果高于单节满电电压，说明值太高；
      * 两种情况都认为协议数据异常，回退到 2.5V*N。
      */
     cell_pre_mv = uart_1_wire.cell_pre_mv;
-    if((cell_pre_mv < CELL_REPAIR_MV) || (cell_pre_mv > CELL_FULL_MV))
+    if((cell_pre_mv < CELL_2000MV) || (cell_pre_mv > CELL_4200MV))
     {
-        return ch_get_pack_pre_mv();
+        return pack_pre_to_cc_mv;
     }
 
     /*
@@ -333,7 +281,7 @@ static u16 ch_get_pre_end_voltage_mv(void)
          */
         if(pack_mv > (u16)(SET_vMAX - cell_pre_mv))
         {
-            return ch_get_pack_pre_mv();
+            return pack_pre_to_cc_mv;
         }
 
         pack_mv += cell_pre_mv;
@@ -345,9 +293,9 @@ static u16 ch_get_pre_end_voltage_mv(void)
      * 如果低于 2.0V*N，说明协议给出的预充结束点偏低，
      * 可能导致过早退出预充阶段，因此回退到 2.5V*N。
      */
-    if(pack_mv < ch_get_pack_repair_mv())
+    if(pack_mv < pack_repair_mv)
     {
-        return ch_get_pack_pre_mv();
+        return pack_pre_to_cc_mv;
     }
 
     return pack_mv;
@@ -609,7 +557,7 @@ static bit ch_no_current_fault_check_10ms(u16 target_voltage_mv, u16 target_curr
         return 0;
     }
 
-    if((val.vout > ch_get_pack_uvp_mv()) &&
+    if((val.vout > pack_uvp_mv) &&
        (((target_current_ma <= 200U) && (val.curr < 30U)) ||    /* 修复小电流：小于30mA才认为无流 */
         ((target_current_ma > 200U) && (val.curr < 100U))))     /* 预充/CCCV：小于100mA认为无流 */
     {
@@ -752,7 +700,7 @@ void usr_ch_func(void)
                 {
                     ch_set_state(BMS_ERR, "握手超时");
                 }
-                else if(val.vout < ch_get_pack_uvp_mv())
+                else if(val.vout < pack_uvp_mv)
                 {
                      ch_set_state(CH_UVP, "握手低压");
                 }
@@ -764,9 +712,22 @@ void usr_ch_func(void)
                     }
                     else if(uart_1_wire.handshake_ok != 0U)
                     {
+                        pack_uvp_mv          = ch_get_pack_uvp_mv();
+                        pack_repair_mv       = ch_get_pack_repair_mv();
+                        pack_pre_to_cc_mv    = ch_get_pack_pre_mv();
+                        pack_poweron_full_mv = ch_get_full_mv();
+                        pack_recharge_mv     = ch_get_recharge_mv();
                         ch_get_cccv_timeout_min();
                         pc_uart_print_batt();
-                        ch_set_state(CH_Check, "握手成功");
+                        
+                        if(val.vout > pack_poweron_full_mv )
+                        {
+                            ch_set_state(CH_FULL, "转满电");
+                        }
+                        else
+                        {
+                            ch_set_state(CH_Check, "握手成功");
+                        }
                     }
                 }
                 break;
@@ -788,7 +749,7 @@ void usr_ch_func(void)
 
                 RLED = 1;
                 GLED = 0;
-                if(val.vout < ch_get_pack_uvp_mv())
+                if(val.vout < pack_uvp_mv)
                 {
                     if(++s_cut[0] >= 50U)        /* 500ms确认电池低压 */
                     {
@@ -813,7 +774,7 @@ void usr_ch_func(void)
                         uart_1_wire_reset_link();
                         ch_set_state(BMS_HANDSHAKE, "重新握手");
                     }
-                    else if(val.vout < ch_get_pack_repair_mv())
+                    else if(val.vout < pack_repair_mv)
                     {
                         ch_set_state(CH_REPAIR, "通信OK，修复");
                     }
@@ -862,7 +823,7 @@ void usr_ch_func(void)
                 {
                     ch_set_state(CH_TimOut, "修复超时");
                 }
-                else if(val.vout >= ch_get_pack_repair_mv())
+                else if(val.vout >= pack_repair_mv)
                 {
                     if(++s_cut[0] >= 300U)        /* 3000ms确认修复完成 */
                     {
@@ -961,7 +922,7 @@ void usr_ch_func(void)
                     s_cut[0] = 0;
                 }
                 
-                if(val.vout < ch_get_pack_uvp_mv())
+                if(val.vout < pack_uvp_mv)
                 {
                     if(++s_cut[1] >= 50U)        /* 500ms确认电池低压 */
                     {
@@ -1010,6 +971,38 @@ void usr_ch_func(void)
                 BATT_DIVIDER_EN = 1;
                 adc_sample_all();
                 ch_err_ck();
+                
+                if(s_cut[0] == 50)
+                {
+                    if(++s_cut[1] >= 10U)
+                    {
+                        s_cut[1] = 0;
+                        if(s_cccv_curr_limit_ma > val.curr + 100)
+                        {
+                            s_cccv_curr_limit_ma -=  100;
+                        }
+                        
+                        if(s_cccv_curr_limit_ma < iGED+100)
+                        {
+                            s_cccv_curr_limit_ma = iGED+100;
+                        }
+                    }
+                }
+                else
+                {
+                    if(val.vout >= target_voltage_mv)
+                    {
+                        if(val.curr >= target_current_ma-200)
+                        {
+                            if(s_cut[0] < 50U)
+                            {
+                                s_cut[0]++;
+                            }
+                        }
+                    }
+                    s_cccv_curr_limit_ma =  target_current_ma;
+                }
+
                 if(ch_check_protect_state() != 0)
                 {
                     ch_output_all_off();
@@ -1022,7 +1015,7 @@ void usr_ch_func(void)
                     s_remove_cnt = 1U;
                     break;
                 }
-                if(ch_no_current_fault_check_10ms(target_voltage_mv, target_current_ma, 1U) != 0)
+                if(ch_no_current_fault_check_10ms(target_voltage_mv, s_cccv_curr_limit_ma, 1U) != 0)
                 {
                     break;
                 }
@@ -1044,8 +1037,7 @@ void usr_ch_func(void)
                 Ged_Flash(100);
                 TimCut();
 
-                //target_current_ma = ch_get_cccv_work_current_ma();   // 达到 4.195V 后开始缓慢降流
-                set_Curr_Duty(SET_CURR(target_current_ma));
+                set_Curr_Duty(SET_CURR(s_cccv_curr_limit_ma));
 
                 if(Tim.min >= cccv_timeout_min)
                 {
@@ -1053,14 +1045,14 @@ void usr_ch_func(void)
                 }
                 else if((val.vout >= target_voltage_mv) && (val.curr <= iGED))
                 {
-                    if(++s_cut[0] >= 100U)       /* 1秒确认满电 */
+                    if(++s_cut[2] >= 100U)       /* 1秒确认满电 */
                     {
                         ch_set_state(CH_FULL, "转满电");
                     }
                 }
                 else
                 {
-                    s_cut[0] = 0;
+                    s_cut[2] = 0;
                 }
                 break;
 
@@ -1117,7 +1109,7 @@ void usr_ch_func(void)
                             ch_set_state(CH_IDLE, "拔电池");
                         }
                     }
-                    else if (val.vout < vCH60)
+                    else if (val.vout < pack_recharge_mv)
                     {
                         s_remove_cnt = 0U;
                         if(++s_cut[0] >= 2U)          /* Prefer B1 max cell; fallback to pack voltage only without B1. */

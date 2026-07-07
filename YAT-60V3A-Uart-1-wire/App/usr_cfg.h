@@ -37,16 +37,16 @@
 
 /* 充电电压/电流阈值 ---------------------------------------------------*/
 #define BAT_SERIES                  (15U)                    /* 电池串数，60V 锂电按 15 串处理 */
-#define CELL_LOW_MV                 (1000U)                  /* 单节极低电压阈值，单位：mV */
-#define CELL_REPAIR_MV              (2000U)                  /* 单节修复/预充进入参考阈值，单位：mV */
-#define CELL_PRE_MV                 (2500U)                  /* 单节预充切换阈值，单位：mV */
-#define CELL_FULL_MV                (4200U)                  /* 单节满电目标电压，单位：mV */
-#define CELL_RECHG_MV               (4000U)                  /* 单节回充参考电压，单位：mV */
+#define CELL_1000MV                 (1000U)                  /* 单节极低电压阈值，单位：mV */
+#define CELL_2000MV                 (2000U)                  /* 单节修复/预充进入参考阈值，单位：mV */
+#define CELL_2500MV                 (2500U)                  /* 单节预充切换阈值，单位：mV */
+#define CELL_4100MV                 (4100U)                  /* 首次插入单节满电阈值，单位：mV */
+#define CELL_4200MV                 (4200U)                  /* 单节满电目标电压，单位：mV */
+#define CELL_4000MV                 (4000U)                  /* 单节回充参考电压，单位：mV */
 #define vRESET                      (1000U)                  /* 输出复位/掉电判断参考，单位：mV */
 #define vSTART                      (15000)                  /* 起充最低包电压，单位：mV */
 #define vPRE_30V                    (30000)                  /* 低压修复/预充参考包电压，单位：mV */
 #define vPRE_38V                    (38000)                  /* 预充转正常充电参考包电压，单位：mV */
-#define vCH60                       (60000)                  /* 回充参考包电压，单位：mV */
 #define SET_vMAX                    (63000U)                 /* 默认恒压设定，单位：mV */
 #define vDCOVP                      (64500U)                 /* 输出过压保护阈值，单位：mV */
 #define iREPAIR                     (100U)                   /* 低压修复电流，单位：mA */

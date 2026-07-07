@@ -80,8 +80,6 @@ static void pc_uart_print_param(void)
     uart_printf("高温提示 %u\n", T_CH_HOT);
     uart_printf("提示恢复 %u\n", T_CH_HOT_OK);
 
-    uart_printf("\n预充定时 %umin\n", TIM_PRE);
-    
 
     uart_printf("上拉电阻: %uk\n", (u16)R1);
     uart_printf("下拉电阻: %uk\n", (u16)R2);
@@ -119,7 +117,8 @@ void pc_uart_print_batt(void)
                 (s16)uart_1_wire.batt_temp_degc,
                 (s16)uart_1_wire.mos_temp_degc);
     
-    uart_printf("CC+CV定时 %umin\n", cccv_timeout_min);
+    uart_printf("[BMS] 预充定时 %umin\n", TIM_PRE);
+    uart_printf("[BMS] CC+CV定时 %umin\n", cccv_timeout_min);
 }
 /**
   * @brief  写入 u16/u32 小端数据，保持 54.6V 原调试帧字节序。

@@ -31,11 +31,11 @@
 #endif
 
 #ifndef U1W_ANY_RX_TIMEOUT_10MS
-#define U1W_ANY_RX_TIMEOUT_10MS            (200U)     /* 2秒没有任意合法帧 */
+#define U1W_ANY_RX_TIMEOUT_10MS            (100U)     /* 1秒没有任意合法帧 */
 #endif
 
 #ifndef U1W_KEY_RX_TIMEOUT_10MS
-#define U1W_KEY_RX_TIMEOUT_10MS            (300U)     /* 3秒关键帧没有刷新 */
+#define U1W_KEY_RX_TIMEOUT_10MS            (200U)     /* 2秒关键帧没有刷新 */
 #endif
 
 #ifndef U1W_FULL_DISPLAY_10MS
@@ -750,7 +750,7 @@ void uart_1_wire_init(void)
     uart_1_wire.cell_type = 0U;
     uart_1_wire.cell_series = BAT_SERIES;
     uart_1_wire.cell_parallel = 1U;
-    uart_1_wire.cell_pre_mv = CELL_PRE_MV;
+    uart_1_wire.cell_pre_mv = CELL_2500MV;
     uart_1_wire.target_voltage_mv = SET_vMAX;
     uart_1_wire.max_charge_current_ma = iMAX;
     uart_1_wire.derate_current_ma = iMAX;
