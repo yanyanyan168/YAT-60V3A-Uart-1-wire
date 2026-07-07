@@ -44,11 +44,11 @@ u16 idata s_dummy_load_10ms;                   /* DUMMY_LOAD hold counter, unit 
 u16 idata cccv_timeout_min;
 
 
-static u16 idata pack_uvp_mv;             // 电池包欠压保护阈值
-static u16 idata pack_repair_mv;          // 电池包欠压修复成功阈值
-static u16 idata pack_pre_to_cc_mv;       // 预充转恒流阈值
-static u16 idata pack_poweron_full_mv;    // 上电满电判断阈值
-static u16 idata pack_recharge_mv;        // 回充电压阈值
+u16 idata pack_uvp_mv;                    // 电池包欠压保护阈值
+u16 idata pack_repair_mv;                 // 电池包欠压修复成功阈值
+u16 idata pack_pre_to_cc_mv;              // 预充转恒流阈值
+u16 idata pack_poweron_full_mv;           // 上电满电判断阈值
+u16 idata pack_recharge_mv;               // 回充电压阈值
 
 #define CH_BMS_TEMP_MASK             (U1W_B4_LOW_TEMP | U1W_B4_HIGH_TEMP | U1W_B4_MOS_HOT)
 #define CH_BMS_ERR_MASK              (U1W_B4_OCP | U1W_B4_SHORT | U1W_B4_TIMEOUT | U1W_B4_FAIL)

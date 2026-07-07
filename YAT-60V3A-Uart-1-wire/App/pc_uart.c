@@ -31,6 +31,11 @@ static u8 xdata s_pc_tx_buf[PC_UART_FRAME_LEN] = { 0 };
 static u8 xdata s_pc_rx_buf[PC_UART_RX_BUF_LEN];
 
 extern u16 idata cccv_timeout_min;
+extern u16 idata pack_uvp_mv;
+extern u16 idata pack_repair_mv;
+extern u16 idata pack_pre_to_cc_mv;
+extern u16 idata pack_poweron_full_mv;
+extern u16 idata pack_recharge_mv;
 
 /**
   * @brief  打包保护标志，方便 PC 调试工具显示。
@@ -119,6 +124,13 @@ void pc_uart_print_batt(void)
     
     uart_printf("[BMS] 预充定时 %umin\n", TIM_PRE);
     uart_printf("[BMS] CC+CV定时 %umin\n", cccv_timeout_min);
+    uart_printf("[BMS] pack_uvp=%u mV, pack_repair=%u mV, pack_pre=%u mV\r\n",
+                pack_uvp_mv,
+                pack_repair_mv,
+                pack_pre_to_cc_mv);
+    uart_printf("[BMS] pack_full=%u mV, pack_recharge=%u mV\r\n",
+                pack_poweron_full_mv,
+                pack_recharge_mv);
 }
 /**
   * @brief  写入 u16/u32 小端数据，保持 54.6V 原调试帧字节序。
