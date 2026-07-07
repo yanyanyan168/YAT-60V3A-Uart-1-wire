@@ -30,6 +30,8 @@ static bit s_tx_auto;
 static u8 xdata s_pc_tx_buf[PC_UART_FRAME_LEN] = { 0 };
 static u8 xdata s_pc_rx_buf[PC_UART_RX_BUF_LEN];
 
+extern u16 idata cccv_timeout_min;
+
 /**
   * @brief  打包保护标志，方便 PC 调试工具显示。
   */
@@ -60,7 +62,6 @@ static void pc_uart_print_param(void)
     uart_printf("\n%s\n", PROJECT_NAME);
 
 
-    uart_printf("修复电流  %umA\n", iREPAIR);
     uart_printf("预充电流  %umA\n", iPRE);
     uart_printf("恒流电流  %umA\n", iMAX);
     uart_printf("转灯电流  %umA\n", iGED);
@@ -69,7 +70,7 @@ static void pc_uart_print_param(void)
     uart_printf("\n识别电压  %umV\n", vSTART);
     uart_printf("修复结束  %umV\n",   vPRE_30V);
 
-    uart_printf("预充电压  %u-%umV\n",  vPRE_30V, vPRE_37V5);
+    uart_printf("预充电压  %u-%umV\n",  vPRE_30V, vPRE_38V);
     uart_printf("最高电压  %umV\n",   SET_vMAX);
     uart_printf("高压保护  %umV\n",   vDCOVP);
 
@@ -80,7 +81,7 @@ static void pc_uart_print_param(void)
     uart_printf("提示恢复 %u\n", T_CH_HOT_OK);
 
     uart_printf("\n预充定时 %umin\n", TIM_PRE);
-    uart_printf("CC+CV定时 %umin\n", TIM_CCCV);
+    
 
     uart_printf("上拉电阻: %uk\n", (u16)R1);
     uart_printf("下拉电阻: %uk\n", (u16)R2);
@@ -97,23 +98,28 @@ static void pc_uart_print_param(void)
   */
 void pc_uart_print_batt(void)
 {
-    uart_printf("[BMS] 阶段=%bu, 握手=%bu, 超时=%bu, 超时命令=%bu\r\n",
-                uart_1_wire.stage,
-                uart_1_wire.handshake_ok,
-                uart_1_wire.comm_timeout,
-                uart_1_wire.key_timeout_cmd);
-    uart_printf("[BMS] 电池包=%bu串%bu并, 容量=%u(0.1Ah), 目标=%u mV/%u mA\r\n",
+    uart_printf("[BMS] ID=%bu, 类型=%bu, 电池包=%bu串%bu并, 容量=%u(0.1Ah)\r\n",
+                uart_1_wire.pack_id,
+                uart_1_wire.cell_type,
                 uart_1_wire.cell_series,
                 uart_1_wire.cell_parallel,
-                uart_1_wire.cell_cap_01ah,
-                uart_1_wire.target_voltage_mv,
-                uart_1_wire.target_current_ma);
-    uart_printf("[BMS] 单节最高=%u mV, 电量=%bu, 电池温度=%dC, MOS温度=%dC, 状态=%bu\r\n",
+                uart_1_wire.cell_cap_01ah);
+    uart_printf("[BMS] 预充=%u mV, 单节低=%u mV, 单节高=%u mV, 目标=%u mV\r\n",
+                uart_1_wire.cell_pre_mv,
+                uart_1_wire.cell_min_mv,
                 uart_1_wire.cell_max_mv,
-                uart_1_wire.soc_percent,
+                uart_1_wire.target_voltage_mv);
+    uart_printf("[BMS] 最大电流=%u mA, 降额电流=%u mA, 目标电流=%u mA\r\n",
+                uart_1_wire.max_charge_current_ma,
+                uart_1_wire.derate_current_ma,
+                uart_1_wire.target_current_ma);
+    uart_printf("[BMS] 温区=%d-%dC, 电池温度=%dC, MOS温度=%dC\r\n",
+                (s16)uart_1_wire.derate_low_degc,
+                (s16)uart_1_wire.derate_high_degc,
                 (s16)uart_1_wire.batt_temp_degc,
-                (s16)uart_1_wire.mos_temp_degc,
-                uart_1_wire.charge_status);
+                (s16)uart_1_wire.mos_temp_degc);
+    
+    uart_printf("CC+CV定时 %umin\n", cccv_timeout_min);
 }
 /**
   * @brief  写入 u16/u32 小端数据，保持 54.6V 原调试帧字节序。
@@ -140,7 +146,7 @@ static void pc_uart_send_auto_frame(void)
     u32 crc32;
 
     pc_uart_put_u32(s_pc_tx_buf, 0U,  (u32)val.vout);
-    pc_uart_put_u32(s_pc_tx_buf, 4U,  0);   /* 本项目无独立 VDC，val.vdc 由 ADC 层镜像 val.vout。 */
+   // pc_uart_put_u32(s_pc_tx_buf, 4U,  0);   /* 本项目无独立 VDC，val.vdc 由 ADC 层镜像 val.vout。 */
     pc_uart_put_u32(s_pc_tx_buf, 8U,  (u32)val.curr);
     pc_uart_put_u32(s_pc_tx_buf, 12U, 0UL);
     pc_uart_put_u16(s_pc_tx_buf, 16U, 0U);
