@@ -85,6 +85,7 @@ typedef struct
     u8  handshake_ok;                       /* A0/A1/A4/A6/A7/B1/B3/B4 收齐标志 */
     u8  handshake_mask;                     /* A0/A1/A4/A6/A7/B1/B3/B4 收齐原始掩码 */
     u8  retry_over;                         /* 兼容旧调试含义：通信已超时 */
+    u8  aging_cmd;                          /* 收到 AGING 老化命令 */
 
     u8  pack_id;
     u8  cell_type;

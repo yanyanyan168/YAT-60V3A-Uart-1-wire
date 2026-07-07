@@ -40,6 +40,7 @@ static u16 idata s_no_current_cnt;             /* 充电中有压无流异常确认计数。 *
 static u16 idata s_vout_probe_period_10ms;    /* 满电/异常时分压检测间隔计数。 */
 static u8  idata s_vout_probe_on_10ms;        /* 满电/异常时分压检测开窗计数。 */
 static bit s_full_recharge;                  /* 满电回充复检阶段保持满电显示。 */
+static bit s_aging_lock;                     /* 老化模式锁存，断电后退出。 */
 u16 idata s_dummy_load_10ms;                   /* DUMMY_LOAD hold counter, unit 10ms. */
 
 u16 idata cccv_timeout_min;
@@ -289,133 +290,41 @@ static u16 ch_get_pre_end_voltage_mv(void)
 /**
   * @brief  获取 CCCV 阶段最长充电时间，单位：分钟。
   *
-  * @param  target_current_ma
-  *         当前准备使用的目标充电电流，单位 mA。
-  *
   * @note   计算依据：
-  *         1. A0 协议中得到电池并数 cell_parallel。
-  *         2. A1 协议中得到单节容量 cell_cap_01ah，单位 0.1Ah。
-  *         3. 按：电池包容量 / 充电电流 估算基础充电时间。
-  *         4. 最后额外增加 30 分钟余量。
-  *
-  * @note   协议未定义多个电池包聚合容量，本函数只按：
-  *         单节容量 × 并数
-  *         来估算电池包容量。
+  *         1. A1 协议中的容量按整包容量使用，单位 0.1Ah。
+  *         2. 按：整包容量 / 充电电流 估算基础充电时间。
+  *         3. 按规格书公式放大 1.25 倍，再额外增加 30 分钟余量。
   *
   * @note   为防止异常协议数据导致时间过大：
-  *         1. 并数限制为 1~16，异常时按 1 并处理。
-  *         2. 单节容量最大限制为 80.0Ah。
-  *         3. 电池包总容量最大限制为 80.0Ah。
-  *
-  * @retval CCCV 最长充电时间，单位：分钟。
+  *         1. 容量最大限制为 80.0Ah。
+  *         2. 目标电流小于 100mA 时使用默认 CCCV 时间。
   */
 void ch_get_cccv_timeout_min(void)
 {
-    u8 i;
-    u8 parallel;          /* 电池并数，来自 A0 协议 */
-    u16 cell_cap_01ah;    /* 单节容量，单位 0.1Ah，来自 A1 协议 */
-    u16 pack_cap_01ah;    /* 按并数估算后的电池包容量，单位 0.1Ah */
+    u16 pack_cap_01ah;    /* 整包容量，单位 0.1Ah，来自 A1 协议 */
     u16 current_100ma;    /* 充电电流换算为 100mA 单位，避免使用浮点 */
 
-    /*
-     * 目标电流太小，或者还没有获取到电芯容量时，
-     * 不进行动态估算，直接使用默认 CCCV 时间。
-     */
-    if(( uart_1_wire.target_current_ma < 100U) || (uart_1_wire.cell_cap_01ah == 0U))
+    if((uart_1_wire.target_current_ma < 100U) || (uart_1_wire.cell_cap_01ah == 0U))
     {
         cccv_timeout_min = TIM_CCCV;
         return;
     }
 
-    /*
-     * 读取 A0 协议给出的并数。
-     * 正常范围限制为 1~16。
-     * 如果协议数据异常，例如 0 或超过 16，则按 1 并处理。
-     */
-    parallel = uart_1_wire.cell_parallel;
-    if((parallel == 0U) || (parallel > 16U))
+    pack_cap_01ah = uart_1_wire.cell_cap_01ah;
+    if(pack_cap_01ah > 800U)
     {
-        parallel = 1U;
+        pack_cap_01ah = 800U;
     }
 
-    /*
-     * 读取 A1 协议给出的单节容量。
-     * 单位：0.1Ah。
-     *
-     * 例如：
-     *  50  = 5.0Ah
-     *  200 = 20.0Ah
-     *  800 = 80.0Ah
-     *
-     * 这里最大限制为 800，即 80.0Ah，
-     * 防止异常协议值导致后面时间计算过大。
-     */
-    cell_cap_01ah = uart_1_wire.cell_cap_01ah;
-    if(cell_cap_01ah > 800U)
-    {
-        cell_cap_01ah = 800U;
-    }
-
-    /*
-     * 根据并数累加得到电池包容量。
-     *
-     * 不直接使用：
-     *  pack_cap_01ah = cell_cap_01ah * parallel;
-     *
-     * 是为了避免乘法结果过大，也方便在累加过程中做上限保护。
-     * 最终 pack_cap_01ah 也限制为最大 800，即 80.0Ah。
-     */
-    pack_cap_01ah = 0U;
-    for(i = 0U; i < parallel; i++)
-    {
-        /*
-         * 如果继续累加会超过 800，则直接钳位到 800。
-         * 这样可以避免容量异常放大，导致 CCCV 超时时间异常变长。
-         */
-        if(pack_cap_01ah > (u16)(800U - cell_cap_01ah))
-        {
-            pack_cap_01ah = 800U;
-            break;
-        }
-
-        pack_cap_01ah += cell_cap_01ah;
-    }
-
-    /*
-     * 将目标电流从 mA 换算成 100mA 单位。
-     *
-     * 例如：
-     *  3000mA -> 30
-     *  5000mA -> 50
-     *
-     * 这样后面可以用整数计算：
-     *  0.1Ah / 0.1A = 1 小时
-     */
-    cccv_timeout_min =  uart_1_wire.target_current_ma / 100U;
-    if(cccv_timeout_min == 0U)
+    current_100ma = uart_1_wire.target_current_ma / 100U;
+    if(current_100ma == 0U)
     {
         cccv_timeout_min = TIM_CCCV;
         return;
     }
 
-    /*
-     * 超时时间估算：
-     *
-     * pack_cap_01ah 单位是 0.1Ah
-     * current_100ma 单位是 0.1A
-     *
-     * pack_cap_01ah / current_100ma 得到的是小时。
-     *
-     * 理论上转分钟应乘以 60。
-     * 这里使用 75，相当于在理论充电时间基础上放大 1.25 倍，
-     * 给恒压尾段、电流下降、通信误差、容量误差留出余量。
-     */
+    /* 容量(0.1Ah) / 电流(0.1A) = 小时；乘 75 = 分钟 * 1.25。 */
     cccv_timeout_min = (u16)((pack_cap_01ah * 75U) / current_100ma);
-
-    /*
-     * 再额外增加 30 分钟保护余量，
-     * 防止部分电池尾段时间较长时提前超时。
-     */
     cccv_timeout_min += 30U;
 }
 
@@ -593,7 +502,7 @@ void usr_ch_func(void)
         {
             wdt_feed();
 
-            if(pc_uart_func() == 1U)  /* DEBUG收到*RST，退出充电流程进入校准 */
+            if(pc_uart_func() == 1U) 
             {
                 flg_cal_mode = 1;
                 break;
@@ -609,6 +518,18 @@ void usr_ch_func(void)
             if(target_current_ma > iMAX)
             {
                 target_current_ma = iMAX;
+            }
+
+            if(uart_1_wire.aging_cmd != 0U)
+            {
+                uart_1_wire.aging_cmd = 0U;
+                s_aging_lock = 1;
+                ch_set_state(CH_AGING, "老化命令");
+            }
+            
+            if(s_aging_lock != 0)
+            {
+                ch_state = CH_AGING;
             }
 
             if(last_state != ch_state)
@@ -637,8 +558,6 @@ void usr_ch_func(void)
                     s_cccv_derate_cnt = 0U;
                 }
             }
-
-//            ch_state = CH_AGING;
 
             switch(ch_state)
             {
@@ -1182,17 +1101,10 @@ stopped_state_probe:
 
             case CH_AGING:
                 /* 老化：强制满功率输出，分压常开，便于观察电压电流。 */
-                uart_1_wire_set_stage(U1W_STAGE_HANDSHAKE);
+                uart_1_wire_set_stage(U1W_STAGE_STOP);
                 uart_1_wire_poll_10ms();
                 BATT_DIVIDER_EN = 1;
                 adc_sample_all();
-//                ch_err_ck();
-//                if(ch_check_protect_state() != 0)
-//                {
-//                    ch_output_all_off();
-//                    break;
-//                }
-
                 DCJK = 1;
                 VADJ = 1;
                 FAN = 1;

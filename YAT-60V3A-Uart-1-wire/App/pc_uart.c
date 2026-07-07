@@ -124,11 +124,11 @@ void pc_uart_print_batt(void)
     
     uart_printf("[BMS] Ô¤³ä¶¨Ê± %umin\n", TIM_PRE);
     uart_printf("[BMS] CC+CV¶¨Ê± %umin\n", cccv_timeout_min);
-    uart_printf("[BMS] pack_uvp=%u mV, pack_repair=%u mV, pack_pre=%u mV\r\n",
+    uart_printf("[BMS] Ç·Ñ¹=%u mV, ÐÞ¸´=%u mV, Ô¤³ä=%u mV\r\n",
                 pack_uvp_mv,
                 pack_repair_mv,
                 pack_pre_to_cc_mv);
-    uart_printf("[BMS] pack_full=%u mV, pack_recharge=%u mV\r\n",
+    uart_printf("[BMS] Âúµç=%u mV, »Ø³ä=%u mV\r\n",
                 pack_poweron_full_mv,
                 pack_recharge_mv);
 }

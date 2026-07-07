@@ -59,6 +59,7 @@ typedef enum
 } U1W_KEY_Types;
 
 #define U1W_HANDSHAKE_MASK                 (0xFFU)
+#define U1W_AGING_CMD_LEN                  (5U)
 
 typedef struct
 {
@@ -101,6 +102,8 @@ static u8 code s_temp_wait_cmd[] =
     U1W_CMD_B3,
     U1W_CMD_B4,
 };
+
+static u8 code s_aging_cmd[U1W_AGING_CMD_LEN] = { 'A', 'G', 'I', 'N', 'G' };
 
 UART_1WIRE_INFO_Types xdata uart_1_wire;
 
@@ -418,6 +421,30 @@ static void u1w_rx_task(void)
 
     /* FIFO 已搬空，清上次 FIFO 长度记录。 */
     s_u1w.rx_fifo_last_cnt = 0U;
+
+    if((s_u1w.rx_len != 0U) && (s_u1w.rx_len <= U1W_AGING_CMD_LEN))
+    {
+        for(i = 0U; i < s_u1w.rx_len; i++)
+        {
+            if(s_rx_buf[i] != s_aging_cmd[i])
+            {
+                break;
+            }
+        }
+
+        if(i == s_u1w.rx_len)
+        {
+            if(s_u1w.rx_len < U1W_AGING_CMD_LEN)
+            {
+                return;
+            }
+
+            uart_1_wire.aging_cmd = 1U;
+            s_u1w.any_rx_age_10ms = 0U;
+            u1w_remove_rx_bytes(U1W_AGING_CMD_LEN);
+            return;
+        }
+    }
 
     /*
      * 从接收缓存中扫描帧头 CMD：
