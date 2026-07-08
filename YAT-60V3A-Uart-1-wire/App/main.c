@@ -456,8 +456,6 @@ void main(void)
     read_cal_data();
     uart_1_wire_init();
 
-    usr_printf("%s %s\r\n", PROJECT_NAME, VERSION);
-
     for(;;)
     {
 #if (MAIN_1WIRE_TEST_EN != 0U)

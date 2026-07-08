@@ -48,7 +48,6 @@ static u8 pc_uart_pack_flag(void)
     flag = 0U;
     if(ch_flag.ch_ntcErr != 0U) { flag |= BIT8(0); }
     if(ch_flag.ch_hotErr != 0U) { flag |= BIT8(1); }
-    if(ch_flag.ch_hot != 0U)    { flag |= BIT8(2); }
     if(ch_flag.ch_ovp != 0U)    { flag |= BIT8(3); }
     if(ch_flag.ch_ocp != 0U)    { flag |= BIT8(4); }
     if(ch_flag.ch_vacErr != 0U) { flag |= BIT8(5); }
@@ -64,9 +63,7 @@ static u8 pc_uart_pack_flag(void)
   */
 static void pc_uart_print_param(void)
 {
-    uart_printf("%s %s\n", MODEL_NAME, VERSION);
-    uart_printf("\n%s\n", PROJECT_NAME);
-
+    uart_printf("%s %s\n", PROJECT_NAME, VERSION);
 
     uart_printf("预充电流  %umA\n", iPRE);
     uart_printf("恒流电流  %umA\n", iMAX);
@@ -83,13 +80,10 @@ static void pc_uart_print_param(void)
     uart_printf("\n内部NTC:\n");
     uart_printf("高温关断 %u\n", T_HOT_ERR);
     uart_printf("高温恢复 %u\n", T_HOT_ERR_OK);
-    uart_printf("高温提示 %u\n", T_CH_HOT);
-    uart_printf("提示恢复 %u\n", T_CH_HOT_OK);
 
-
-    uart_printf("上拉电阻: %uk\n", (u16)R1);
-    uart_printf("下拉电阻: %uk\n", (u16)R2);
-    uart_printf("电流电阻: %umR\n", (u16)Ra);
+    uart_printf("上拉: %uk\n", (u16)R1);
+    uart_printf("下拉: %uk\n", (u16)R2);
+    uart_printf("电流: %umR\n", (u16)Ra);
     uart_printf("GAIN: %u\n", (u16)GAIN);
 
     uart_printf("\n状态:\n0空载\n1 检测\n2 握手\n3 预充\n4 CCCV\n5 满电\n6 OVP\n7 预超\n8 OTP\n");

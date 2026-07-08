@@ -121,41 +121,7 @@ static void get_ch_hotErr(void)
         }
     }
 }
-static void get_ch_hot(void)
-{
-    static u8 idata cut_on;
-    static u8 idata cut_off;
-    if(ch_flag.ch_hot != 0U)
-    {
-        if(val.i_ntc < T_CH_HOT_OK)
-        {
-            if(++cut_off >= 50U)
-            {
-                cut_off = 0U;
-                ch_flag.ch_hot = 0U;
-            }
-        }
-        else
-        {
-            cut_off = 0U;
-        }
-    }
-    else
-    {
-        if(val.i_ntc > T_CH_HOT)
-        {
-            if(++cut_on >= 50U)
-            {
-                cut_on = 0U;
-                ch_flag.ch_hot = 1U;
-            }
-        }
-        else
-        {
-            cut_on = 0U;
-        }
-    }
-}
+
 static void get_chovp(void)
 {
     static u8 idata cut_on;
@@ -230,7 +196,6 @@ void ch_err_ck(void)
 {
     get_ch_ntcErr();
     get_ch_hotErr();
-    get_ch_hot();
     get_chovp();
     get_chocp();
 }

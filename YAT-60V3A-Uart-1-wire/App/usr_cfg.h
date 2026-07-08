@@ -14,8 +14,7 @@
 #define __USR_CFG_H__
 
 /* 项目信息 ------------------------------------------------------------*/
-#define PROJECT_NAME                "60V3A_CHARGER_1WIRE"  /* 工程名称，用于调试/识别 */
-#define MODEL_NAME                  "60V3A"                 /* 机种名称 */
+#define PROJECT_NAME                "YAT-60V3A"             /* 工程名称，用于调试/识别 */
 #define VERSION                     "V0.01"                 /* 软件版本号 */
 #define JIZHONG                     (6030U)                  /* 机种编号/项目识别码，按上位机约定保留 */
 
@@ -61,9 +60,7 @@
 
 /* NTC 温度阈值 --------------------------------------------------------*/
 #define T_HOT_ERR                   (1050U)                  /* NTC 高温保护阈值，单位：0.1℃，1050=105.0℃ */
-#define T_HOT_ERR_OK                (800U)                   /* NTC 高温保护恢复阈值，单位：0.1℃，800=80.0℃ */
-#define T_CH_HOT                    (950U)                   /* 内部高温提示阈值，不参与降额，单位：0.1℃ */
-#define T_CH_HOT_OK                 (700U)                   /* 内部高温提示恢复阈值，不参与降额，单位：0.1℃ */
+#define T_HOT_ERR_OK                (700U)                   /* NTC 高温保护恢复阈值，单位：0.1℃，700=70.0℃ */
 #define BATT_18650_CHG_TEMP_LOW_C   (-2)                     /* 18650电池充电低温保护阈值，单位：℃ */
 #define BATT_18650_CHG_TEMP_HIGH_C  (50)                     /* 18650电池充电高温保护阈值，单位：℃ */
 #define BATT_18650_REC_TEMP_LOW_C   (0)                      /* 18650电池温度恢复低阈值，单位：℃ */

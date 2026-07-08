@@ -21,7 +21,7 @@
 
 /* 解析日志开关：当前成功帧已合并打印，本宏保留给调试配置使用。 */
 #ifndef U1W_DEBUG_PARSE_EN
-#define U1W_DEBUG_PARSE_EN                  (1U)
+#define U1W_DEBUG_PARSE_EN                  (0U)
 #endif
 
 /* 命令过滤：0=全部打印，其他值=只打印指定命令。 */

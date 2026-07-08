@@ -33,7 +33,6 @@ typedef struct
 {
     u8 ch_ntcErr : 1;
     u8 ch_hotErr : 1;
-    u8 ch_hot    : 1;
     u8 ch_ovp    : 1;
     u8 ch_ocp    : 1;
     u8 ch_vacErr : 1;

@@ -52,7 +52,7 @@ u16 idata pack_pre_to_cc_mv;              // 预充转恒流阈值
 u16 idata pack_poweron_full_mv;           // 上电满电判断阈值
 u16 idata pack_recharge_mv;               // 回充电压阈值
 
-#define CH_BMS_TEMP_MASK             (U1W_B4_LOW_TEMP | U1W_B4_HIGH_TEMP | U1W_B4_MOS_HOT)
+#define CH_BMS_TEMP_MASK             (U1W_B4_LOW_TEMP | U1W_B4_HIGH_TEMP)
 #define CH_BMS_ERR_MASK              (U1W_B4_OCP | U1W_B4_SHORT | U1W_B4_TIMEOUT | U1W_B4_FAIL)
 
 /*
@@ -77,7 +77,7 @@ static char * code s_ch_state_name[] =
     "硬件异常",
     "欠压保护",
     "CCCV超时",
-    "BMS温度异常",
+    "BMS温度保护",
     "BMS异常",
     "超低压修复",
     "老化",
@@ -400,18 +400,43 @@ static bit ch_bms_temp_recovered(void)
     return 0;
 }
 
+static char *ch_bms_err_reason(void)
+{
+    u8 b4;
+
+    b4 = uart_1_wire.charge_status;
+    if((b4 & U1W_B4_OCP) != 0U)
+    {
+        return "BMS流大";
+    }
+    if((b4 & U1W_B4_SHORT) != 0U)
+    {
+        return "BMS短路";
+    }
+    if((b4 & U1W_B4_TIMEOUT) != 0U)
+    {
+        return "BMS时限";
+    }
+    if((b4 & U1W_B4_FAIL) != 0U)
+    {
+        return "BMS失效";
+    }
+
+    return "BMS异常";
+}
+
 static bit ch_bms_status_check(void)
 {
     if((uart_1_wire.charge_status & CH_BMS_ERR_MASK) != 0U)
     {
         pc_uart_print_batt(PC_BATT_PRINT_B4);
-        ch_set_state(BMS_ERR, "BMS异常");
+        ch_set_state(BMS_ERR, ch_bms_err_reason());
         return 1;
     }
     if(ch_bms_temp_fault_active() != 0)
     {
         pc_uart_print_batt(PC_BATT_PRINT_TEMP_B4);
-        ch_set_state(BMS_TEMP_ERR, "BMS温异常");
+        ch_set_state(BMS_TEMP_ERR, "BMS温高");
         return 1;
     }
     if((uart_1_wire.charge_status & U1W_B4_OV) != 0U)
@@ -497,7 +522,7 @@ void usr_ch_func(void)
 
     next_10ms = timer_deadline_ms(TASK_10MS);
     uart_1_wire_reset_link();
-    uart_printf("充电流程启动\n");
+    uart_printf("CH START\n");
 
     while(flg_cal_mode == 0)
     {
@@ -1087,12 +1112,7 @@ stopped_state_probe:
                 {
                     if(uart_1_wire.comm_timeout != 0U)
                     {
-                        ch_set_state(BMS_ERR, "温度通信超时");
-                    }
-                    else if((uart_1_wire.charge_status & CH_BMS_ERR_MASK) != 0U)
-                    {
-                        pc_uart_print_batt(PC_BATT_PRINT_B4);
-                        ch_set_state(BMS_ERR, "BMS异常");
+                        ch_set_state(BMS_ERR, "BMS通信超时");
                     }
                     else if(ch_bms_temp_recovered() != 0)
                     {
