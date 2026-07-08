@@ -404,17 +404,20 @@ static bit ch_bms_status_check(void)
 {
     if((uart_1_wire.charge_status & CH_BMS_ERR_MASK) != 0U)
     {
+        pc_uart_print_batt(PC_BATT_PRINT_B4);
         ch_set_state(BMS_ERR, "BMS异常");
         return 1;
     }
     if(ch_bms_temp_fault_active() != 0)
     {
-        ch_set_state(BMS_TEMP_ERR, "BMS温度异常");
+        pc_uart_print_batt(PC_BATT_PRINT_TEMP_B4);
+        ch_set_state(BMS_TEMP_ERR, "BMS温异常");
         return 1;
     }
     if((uart_1_wire.charge_status & U1W_B4_OV) != 0U)
     {
-        ch_set_state(CH_FULL, "BMS满电");
+        pc_uart_print_batt(PC_BATT_PRINT_B4);
+        ch_set_state(CH_FULL, "BMS单节高");
         return 1;
     }
 
@@ -635,7 +638,7 @@ void usr_ch_func(void)
                         pack_poweron_full_mv = ch_get_pack_mv(CELL_4100MV);
                         pack_recharge_mv     = ch_get_pack_mv(CELL_4000MV);
                         ch_get_cccv_timeout_min();
-                        pc_uart_print_batt();
+                        pc_uart_print_batt(PC_BATT_PRINT_ALL);
                         
                         if(val.vout > pack_poweron_full_mv )
                         {
@@ -848,36 +851,39 @@ void usr_ch_func(void)
                     ch_set_state(CH_IDLE, "拔电池");
                     break;
                 }
-                
-                if(s_cut[0] == 50)
+
+                if (val.vout >= (u16)(target_voltage_mv - 200U))
                 {
-                    if(++s_cut[1] >= 10U)
+                    // 实际电流已经比当前限流值低了至少 100mA，才认为可以准备降流
+                    if((u16)(val.curr + 100U) <= s_cccv_curr_limit_ma)
                     {
-                        s_cut[1] = 0;
-                        if(s_cccv_curr_limit_ma > val.curr + 100)
+                        if(++s_cut[0] >= 30U)
                         {
-                            s_cccv_curr_limit_ma -=  100;
+                            s_cut[0] = 0U;
+
+                            /*
+                             * 限流值只允许下降 100mA。
+                             * 最低限制为 iGED + 100mA。
+                             */
+                            if(s_cccv_curr_limit_ma > (u16)(iGED + 200U))
+                            {
+                                s_cccv_curr_limit_ma -= 100U;
+                            }
+                            else
+                            {
+                                s_cccv_curr_limit_ma = (u16)(iGED + 100U);
+                            }
                         }
-                        
-                        if(s_cccv_curr_limit_ma < iGED+100)
-                        {
-                            s_cccv_curr_limit_ma = iGED+100;
-                        }
+                    }
+                    else
+                    {
+                        s_cut[0] = 0U;
                     }
                 }
                 else
                 {
-                    if(val.vout >= target_voltage_mv)
-                    {
-                        if(val.curr >= target_current_ma-200)
-                        {
-                            if(s_cut[0] < 50U)
-                            {
-                                s_cut[0]++;
-                            }
-                        }
-                    }
-                    s_cccv_curr_limit_ma =  target_current_ma;
+                    s_cccv_curr_limit_ma = target_current_ma;
+                    s_cut[0] = 0U;
                 }
 
                 if(ch_check_protect_state() != 0)
@@ -886,6 +892,7 @@ void usr_ch_func(void)
                     break;
                 }
 
+                // 充电中有输出电压但长期无电流，判为充电器/回路异常。
                 if(ch_no_current_fault_check_10ms(target_voltage_mv, s_cccv_curr_limit_ma, 1U) != 0)
                 {
                     break;
@@ -1084,6 +1091,7 @@ stopped_state_probe:
                     }
                     else if((uart_1_wire.charge_status & CH_BMS_ERR_MASK) != 0U)
                     {
+                        pc_uart_print_batt(PC_BATT_PRINT_B4);
                         ch_set_state(BMS_ERR, "BMS异常");
                     }
                     else if(ch_bms_temp_recovered() != 0)

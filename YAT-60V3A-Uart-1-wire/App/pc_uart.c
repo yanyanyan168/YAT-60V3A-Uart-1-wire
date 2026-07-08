@@ -17,6 +17,7 @@
 #include "ch.h"
 #include "timer.h"
 #include "uart_1_wire.h"
+#include "usr_cfg.h"
 #include "stm32_crc.h"
 
 #define PC_UART_DATA_LEN                 (36U)
@@ -99,38 +100,84 @@ static void pc_uart_print_param(void)
 /**
   * @brief  打印当前采样和状态，便于 DEBUG 人工联调。
   */
-void pc_uart_print_batt(void)
+void pc_uart_print_batt(u8 item)
 {
-    uart_printf("[BMS] ID=%bu, 类型=%bu, 电池包=%bu串%bu并, 容量=%u(0.1Ah)\r\n",
-                uart_1_wire.pack_id,
-                uart_1_wire.cell_type,
-                uart_1_wire.cell_series,
-                uart_1_wire.cell_parallel,
-                uart_1_wire.cell_cap_01ah);
-    uart_printf("[BMS] 预充=%u mV, 单节低=%u mV, 单节高=%u mV, 目标=%u mV\r\n",
-                uart_1_wire.cell_pre_mv,
-                uart_1_wire.cell_min_mv,
-                uart_1_wire.cell_max_mv,
-                uart_1_wire.target_voltage_mv);
-    uart_printf("[BMS] 最大电流=%u mA, 降额电流=%u mA, 目标电流=%u mA\r\n",
-                uart_1_wire.max_charge_current_ma,
-                uart_1_wire.derate_current_ma,
-                uart_1_wire.target_current_ma);
-    uart_printf("[BMS] 温区=%d-%dC, 电池温度=%dC, MOS温度=%dC\r\n",
-                (s16)uart_1_wire.derate_low_degc,
-                (s16)uart_1_wire.derate_high_degc,
-                (s16)uart_1_wire.batt_temp_degc,
-                (s16)uart_1_wire.mos_temp_degc);
-    
-    uart_printf("[BMS] 预充定时 %umin\n", TIM_PRE);
-    uart_printf("[BMS] CC+CV定时 %umin\n", cccv_timeout_min);
-    uart_printf("[BMS] 欠压=%u mV, 修复=%u mV, 预充=%u mV\r\n",
-                pack_uvp_mv,
-                pack_repair_mv,
-                pack_pre_to_cc_mv);
-    uart_printf("[BMS] 满电=%u mV, 回充=%u mV\r\n",
-                pack_poweron_full_mv,
-                pack_recharge_mv);
+    u8 b4;
+    s8 chg_low;
+    s8 chg_high;
+    s8 rec_low;
+    s8 rec_high;
+
+    b4 = uart_1_wire.charge_status;
+
+    if(item == PC_BATT_PRINT_ALL)
+    {
+        uart_printf("[BMS] ID=%bu, 类型=%bu, 电池包=%bu串%bu并, 容量=%u(0.1Ah)\r\n",
+                    uart_1_wire.pack_id,
+                    uart_1_wire.cell_type,
+                    uart_1_wire.cell_series,
+                    uart_1_wire.cell_parallel,
+                    uart_1_wire.cell_cap_01ah);
+        uart_printf("[BMS] 预充=%u mV, 单节低=%u mV, 单节高=%u mV, 目标=%u mV\r\n",
+                    uart_1_wire.cell_pre_mv,
+                    uart_1_wire.cell_min_mv,
+                    uart_1_wire.cell_max_mv,
+                    uart_1_wire.target_voltage_mv);
+        uart_printf("[BMS] 最大电流=%u mA, 降额电流=%u mA, 目标电流=%u mA\r\n",
+                    uart_1_wire.max_charge_current_ma,
+                    uart_1_wire.derate_current_ma,
+                    uart_1_wire.target_current_ma);
+    }
+
+    if(item != PC_BATT_PRINT_B4)
+    {
+        if(uart_1_wire.cell_type == U1W_CELL_TYPE_21700)
+        {
+            chg_low = BATT_21700_CHG_TEMP_LOW_C;
+            chg_high = BATT_21700_CHG_TEMP_HIGH_C;
+            rec_low = BATT_21700_REC_TEMP_LOW_C;
+            rec_high = BATT_21700_REC_TEMP_HIGH_C;
+        }
+        else
+        {
+            chg_low = BATT_18650_CHG_TEMP_LOW_C;
+            chg_high = BATT_18650_CHG_TEMP_HIGH_C;
+            rec_low = BATT_18650_REC_TEMP_LOW_C;
+            rec_high = BATT_18650_REC_TEMP_HIGH_C;
+        }
+        uart_printf("[BMS] 类型=%bu 充温=%d-%dC 恢温=%d-%dC 电池=%dC MOS=%dC\r\n",
+                    uart_1_wire.cell_type,
+                    (s16)chg_low,
+                    (s16)chg_high,
+                    (s16)rec_low,
+                    (s16)rec_high,
+                    (s16)uart_1_wire.batt_temp_degc,
+                    (s16)uart_1_wire.mos_temp_degc);
+    }
+
+    if(item == PC_BATT_PRINT_ALL)
+    {
+        uart_printf("[BMS] 预充定时 %umin\n", TIM_PRE);
+        uart_printf("[BMS] CC+CV定时 %umin\n", cccv_timeout_min);
+        uart_printf("[BMS] 欠压=%u mV, 修复=%u mV, 预充=%u mV\r\n",
+                    pack_uvp_mv,
+                    pack_repair_mv,
+                    pack_pre_to_cc_mv);
+        uart_printf("[BMS] 满电=%u mV, 回充=%u mV\r\n",
+                    pack_poweron_full_mv,
+                    pack_recharge_mv);
+    }
+
+    uart_printf("[BMS] B4=%bu 单节高=%bu 温低=%bu 温高=%bu MOS热=%bu 流大=%bu 短路=%bu 时限=%bu 失效=%bu\r\n",
+                b4,
+                (u8)((b4 & U1W_B4_OV) ? 1U : 0U),
+                (u8)((b4 & U1W_B4_LOW_TEMP) ? 1U : 0U),
+                (u8)((b4 & U1W_B4_HIGH_TEMP) ? 1U : 0U),
+                (u8)((b4 & U1W_B4_MOS_HOT) ? 1U : 0U),
+                (u8)((b4 & U1W_B4_OCP) ? 1U : 0U),
+                (u8)((b4 & U1W_B4_SHORT) ? 1U : 0U),
+                (u8)((b4 & U1W_B4_TIMEOUT) ? 1U : 0U),
+                (u8)((b4 & U1W_B4_FAIL) ? 1U : 0U));
 }
 /**
   * @brief  写入 u16/u32 小端数据，保持 54.6V 原调试帧字节序。
@@ -215,7 +262,7 @@ u8 pc_uart_func(void)
             else if((s_pc_rx_buf[0] == 'b') && (s_pc_rx_buf[1] == 'a') &&
                     (s_pc_rx_buf[2] == 't') && (s_pc_rx_buf[3] == 't'))
             {
-                pc_uart_print_batt();
+                pc_uart_print_batt(PC_BATT_PRINT_ALL);
             }
         }
 

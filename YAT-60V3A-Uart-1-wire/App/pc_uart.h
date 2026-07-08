@@ -9,7 +9,11 @@
 
 #include "common.h"
 
+#define PC_BATT_PRINT_ALL              (0U)
+#define PC_BATT_PRINT_B4               (1U)
+#define PC_BATT_PRINT_TEMP_B4          (2U)
+
 u8 pc_uart_func(void);
-void pc_uart_print_batt(void);
+void pc_uart_print_batt(u8 item);
 
 #endif
