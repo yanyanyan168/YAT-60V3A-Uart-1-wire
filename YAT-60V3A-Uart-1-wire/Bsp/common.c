@@ -6,8 +6,6 @@ bit ch_ntcErr;
 bit ch_hotErr;
 bit ch_ovp;
 bit ch_ocp;
-bit ch_vacErr;
-bit ch_hard;
 TIMER_Types idata Tim;
 
 void memclr(void *addr, u16 len)
@@ -58,7 +56,7 @@ static void get_ch_ntcErr(void)
     static u8 idata cut_off;
     if(ch_ntcErr == 0U)
     {
-        if((adc.i_ntc > 4050U) || (adc.i_ntc < 50U))
+        if((adc.i_ntc > 3950U) || (adc.i_ntc < 50U))
         {
             if(++cut_on >= 50U)
             {

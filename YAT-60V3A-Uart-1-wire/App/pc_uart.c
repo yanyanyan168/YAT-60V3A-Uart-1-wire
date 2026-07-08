@@ -48,11 +48,8 @@ static u8 pc_uart_pack_flag(void)
     flag = 0U;
     if(ch_ntcErr != 0U) { flag |= BIT8(0); }
     if(ch_hotErr != 0U) { flag |= BIT8(1); }
-    if(ch_ovp != 0U)    { flag |= BIT8(3); }
-    if(ch_ocp != 0U)    { flag |= BIT8(4); }
-    if(ch_vacErr != 0U) { flag |= BIT8(5); }
-    if(ch_hard != 0U)   { flag |= BIT8(6); }
-
+    if(ch_ovp != 0U)    { flag |= BIT8(2); }
+    if(ch_ocp != 0U)    { flag |= BIT8(3); }
     return flag;
 }
 
@@ -70,10 +67,6 @@ static void pc_uart_print_param(void)
     uart_printf("转灯电流  %umA\n", iGED);
     uart_printf("保护电流  %umA\n", iOCP);
     
-    uart_printf("\n识别电压  %umV\n", vSTART);
-    uart_printf("修复结束  %umV\n",   vPRE_30V);
-
-    uart_printf("预充电压  %u-%umV\n",  vPRE_30V, vPRE_38V);
     uart_printf("最高电压  %umV\n",   SET_vMAX);
     uart_printf("高压保护  %umV\n",   vDCOVP);
 
@@ -121,6 +114,16 @@ void pc_uart_print_batt(u8 item)
                     uart_1_wire.max_charge_current_ma,
                     uart_1_wire.derate_current_ma,
                     uart_1_wire.target_current_ma);
+        
+        uart_printf("[BMS] 预充定时 %umin\n", TIM_PRE);
+        uart_printf("[BMS] CC+CV定时 %umin\n", cccv_timeout_min);
+        uart_printf("[BMS] 欠压=%u mV, 修复=%u mV, 预充=%u mV\r\n",
+                    pack_uvp_mv,
+                    pack_repair_mv,
+                    pack_pre_to_cc_mv);
+        uart_printf("[BMS] 满电=%u mV, 回充=%u mV\r\n",
+                    pack_poweron_full_mv,
+                    pack_recharge_mv);
     }
 
     if(item != PC_BATT_PRINT_B4)
@@ -147,19 +150,6 @@ void pc_uart_print_batt(u8 item)
                     (s16)rec_high,
                     (s16)uart_1_wire.batt_temp_degc,
                     (s16)uart_1_wire.mos_temp_degc);
-    }
-
-    if(item == PC_BATT_PRINT_ALL)
-    {
-        uart_printf("[BMS] 预充定时 %umin\n", TIM_PRE);
-        uart_printf("[BMS] CC+CV定时 %umin\n", cccv_timeout_min);
-        uart_printf("[BMS] 欠压=%u mV, 修复=%u mV, 预充=%u mV\r\n",
-                    pack_uvp_mv,
-                    pack_repair_mv,
-                    pack_pre_to_cc_mv);
-        uart_printf("[BMS] 满电=%u mV, 回充=%u mV\r\n",
-                    pack_poweron_full_mv,
-                    pack_recharge_mv);
     }
 
     uart_printf("[BMS] B4=%bu 单节高=%bu 温低=%bu 温高=%bu MOS热=%bu 流大=%bu 短路=%bu 时限=%bu 失效=%bu\r\n",

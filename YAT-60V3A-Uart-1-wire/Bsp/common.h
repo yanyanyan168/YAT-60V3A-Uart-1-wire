@@ -73,8 +73,6 @@ extern bit ch_ntcErr;
 extern bit ch_hotErr;
 extern bit ch_ovp;
 extern bit ch_ocp;
-extern bit ch_vacErr;
-extern bit ch_hard;
 extern TIMER_Types idata Tim;
 extern u8 idata data_len_bk;
 extern u16 data next_10ms;
