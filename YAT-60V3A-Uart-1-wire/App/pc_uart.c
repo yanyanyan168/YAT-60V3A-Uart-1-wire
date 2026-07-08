@@ -46,12 +46,12 @@ static u8 pc_uart_pack_flag(void)
     u8 flag;
 
     flag = 0U;
-    if(ch_flag.ch_ntcErr != 0U) { flag |= BIT8(0); }
-    if(ch_flag.ch_hotErr != 0U) { flag |= BIT8(1); }
-    if(ch_flag.ch_ovp != 0U)    { flag |= BIT8(3); }
-    if(ch_flag.ch_ocp != 0U)    { flag |= BIT8(4); }
-    if(ch_flag.ch_vacErr != 0U) { flag |= BIT8(5); }
-    if(ch_flag.ch_hard != 0U)   { flag |= BIT8(6); }
+    if(ch_ntcErr != 0U) { flag |= BIT8(0); }
+    if(ch_hotErr != 0U) { flag |= BIT8(1); }
+    if(ch_ovp != 0U)    { flag |= BIT8(3); }
+    if(ch_ocp != 0U)    { flag |= BIT8(4); }
+    if(ch_vacErr != 0U) { flag |= BIT8(5); }
+    if(ch_hard != 0U)   { flag |= BIT8(6); }
 
     return flag;
 }

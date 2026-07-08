@@ -1,14 +1,15 @@
-/**
-  ******************************************************************************
-  * @file    common.c
-  * @brief   ?????????
-  ******************************************************************************
-  */
 #include "common.h"
 #include "adc.h"
 #include "gpio.h"
-FLAG_Types idata ch_flag;
+
+bit ch_ntcErr;
+bit ch_hotErr;
+bit ch_ovp;
+bit ch_ocp;
+bit ch_vacErr;
+bit ch_hard;
 TIMER_Types idata Tim;
+
 void memclr(void *addr, u16 len)
 {
     u8 *p;
@@ -55,14 +56,14 @@ static void get_ch_ntcErr(void)
 {
     static u8 idata cut_on;
     static u8 idata cut_off;
-    if(ch_flag.ch_ntcErr == 0U)
+    if(ch_ntcErr == 0U)
     {
         if((adc.i_ntc > 4050U) || (adc.i_ntc < 50U))
         {
             if(++cut_on >= 50U)
             {
                 cut_on = 0U;
-                ch_flag.ch_ntcErr = 1U;
+                ch_ntcErr = 1U;
             }
         }
         else
@@ -77,7 +78,7 @@ static void get_ch_ntcErr(void)
             if(++cut_off >= 50U)
             {
                 cut_off = 0U;
-                ch_flag.ch_ntcErr = 0U;
+                ch_ntcErr = 0U;
             }
         }
         else
@@ -86,18 +87,19 @@ static void get_ch_ntcErr(void)
         }
     }
 }
+
 static void get_ch_hotErr(void)
 {
     static u8 idata cut_on;
     static u8 idata cut_off;
-    if(ch_flag.ch_hotErr != 0U)
+    if(ch_hotErr != 0U)
     {
         if(val.i_ntc < T_HOT_ERR_OK)
         {
             if(++cut_off >= 50U)
             {
                 cut_off = 0U;
-                ch_flag.ch_hotErr = 0U;
+                ch_hotErr = 0U;
             }
         }
         else
@@ -112,7 +114,7 @@ static void get_ch_hotErr(void)
             if(++cut_on >= 50U)
             {
                 cut_on = 0U;
-                ch_flag.ch_hotErr = 1U;
+                ch_hotErr = 1U;
             }
         }
         else
@@ -126,14 +128,14 @@ static void get_chovp(void)
 {
     static u8 idata cut_on;
     static u8 idata cut_off;
-    if(ch_flag.ch_ovp == 0U)
+    if(ch_ovp == 0U)
     {
         if(val.vout >= vDCOVP)
         {
             if(++cut_on >= 50U)
             {
                 cut_on = 0U;
-                ch_flag.ch_ovp = 1U;
+                ch_ovp = 1U;
             }
         }
         else
@@ -148,7 +150,7 @@ static void get_chovp(void)
             if(++cut_off >= 200U)
             {
                 cut_off = 0U;
-                ch_flag.ch_ovp = 0U;
+                ch_ovp = 0U;
             }
         }
         else
@@ -157,18 +159,19 @@ static void get_chovp(void)
         }
     }
 }
+
 static void get_chocp(void)
 {
     static u8 idata cut_on;
     static u8 idata cut_off;
-    if(ch_flag.ch_ocp == 0U)
+    if(ch_ocp == 0U)
     {
         if(val.curr >= iOCP)
         {
             if(++cut_on >= 50U)
             {
                 cut_on = 0U;
-                ch_flag.ch_ocp = 1U;
+                ch_ocp = 1U;
             }
         }
         else
@@ -183,7 +186,7 @@ static void get_chocp(void)
             if(++cut_off >= 50U)
             {
                 cut_off = 0U;
-                ch_flag.ch_ocp = 0U;
+                ch_ocp = 0U;
             }
         }
         else
@@ -192,6 +195,7 @@ static void get_chocp(void)
         }
     }
 }
+
 void ch_err_ck(void)
 {
     get_ch_ntcErr();
@@ -199,6 +203,7 @@ void ch_err_ck(void)
     get_chovp();
     get_chocp();
 }
+
 void TimCut(void)
 {
     if(++Tim.ms >= 100U)
@@ -214,6 +219,7 @@ void TimCut(void)
         }
     }
 }
+
 
 
 void Red_Flash(u8 period_n10ms)

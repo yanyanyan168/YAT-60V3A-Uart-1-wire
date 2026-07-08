@@ -29,15 +29,6 @@ typedef enum
     UART_1WIRE_DIR_TX = 1,
 } UART_1WIRE_DIR_Types;
 
-typedef struct
-{
-    u8 ch_ntcErr : 1;
-    u8 ch_hotErr : 1;
-    u8 ch_ovp    : 1;
-    u8 ch_ocp    : 1;
-    u8 ch_vacErr : 1;
-    u8 ch_hard   : 1;
-} FLAG_Types;
 
 typedef struct
 {
@@ -78,7 +69,12 @@ void memclr(void *addr, u16 len);
 u16 common_clamp_u16(u16 val, u16 min_val, u16 max_val);
 u8 common_sum_u8(u8 *buf, u8 len);
 
-extern FLAG_Types idata ch_flag;
+extern bit ch_ntcErr;
+extern bit ch_hotErr;
+extern bit ch_ovp;
+extern bit ch_ocp;
+extern bit ch_vacErr;
+extern bit ch_hard;
 extern TIMER_Types idata Tim;
 extern u8 idata data_len_bk;
 extern u16 data next_10ms;

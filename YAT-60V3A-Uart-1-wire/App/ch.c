@@ -130,22 +130,22 @@ static void ch_set_state(CH_STATUS_Types next_state, char *reason)
   */
 static bit ch_check_protect_state(void)
 {
-    if(ch_flag.ch_ntcErr != 0)
+    if(ch_ntcErr != 0)
     {
         ch_set_state(NTC_ERR, "NTC开短路");
         return 1;
     }
-    else if(ch_flag.ch_hotErr != 0)
+    else if(ch_hotErr != 0)
     {
         ch_set_state(CH_OTP, "CH高温");
         return 1;
     }
-    else if(ch_flag.ch_ovp != 0)
+    else if(ch_ovp != 0)
     {
         ch_set_state(CH_OVP, "CH高压");
         return 1;
     }
-    else if(ch_flag.ch_ocp != 0)
+    else if(ch_ocp != 0)
     {
         ch_set_state(CH_OCP, "CH OCP");
         return 1;
@@ -1120,7 +1120,7 @@ stopped_state_probe:
                         ch_set_state(BMS_HANDSHAKE, "BMS温度恢复");
                     }
                 }
-                else if((ch_state == CH_OTP) && (ch_flag.ch_hotErr == 0))  /* 充电器温度恢复后重新握手 */
+                else if((ch_state == CH_OTP) && (ch_hotErr == 0))  /* 充电器温度恢复后重新握手 */
                 {
                     uart_1_wire_reset_link();
                     ch_set_state(BMS_HANDSHAKE, "OTP恢复，重新握手");

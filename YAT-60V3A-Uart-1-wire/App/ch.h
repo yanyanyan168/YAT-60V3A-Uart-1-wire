@@ -13,7 +13,7 @@ extern bit flg_cal_mode;
 
 extern CH_STATUS_Types idata ch_state;
 extern CH_STATUS_Types idata last_state;
-extern FLAG_Types idata ch_flag;
+
 extern TIMER_Types idata Tim;
 
 void usr_ch_func(void);
