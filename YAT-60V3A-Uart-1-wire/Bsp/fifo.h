@@ -19,7 +19,6 @@ typedef struct
     u8 rd;
     u8 wr;
     u8 cnt;
-    u8 overflow;
 } fifo_t;
 
 extern fifo_t idata s_ch_fifo;
@@ -36,8 +35,6 @@ bit ch_fifo_overflow(void);
 void com_fifo_clear(void);
 void com_fifo_push(u8 dat);
 u8 com_fifo_pop(void);
-
-bit com_fifo_overflow(void);
 
 
 #endif

@@ -27,8 +27,7 @@
 /* ADC 换算参数 --------------------------------------------------------*/
 #define ADC_VREF_MV                 (5000UL)                 /* ADC 参考电压，单位：mV */
 #define ADC_FULL                    (4095UL)                 /* 12 位 ADC 满量程 */
-#define ADC_SAMPLE_CNT              (10U)                    /* ADC 采样次数 */
-#define ADC_DROP_CNT                (2U)                     /* 去极值数量/滤波丢弃数量 */
+
 #define R1                          (300UL)                  /* 输出电压采样上拉电阻，单位：Kohm */
 #define R2                          (20UL)                   /* 输出电压采样下拉电阻，单位：Kohm */
 #define Ra                          (50UL)                   /* 电流采样电阻，单位：mohm */

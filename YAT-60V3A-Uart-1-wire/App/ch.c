@@ -31,16 +31,15 @@
 CH_STATUS_Types idata ch_state;
 CH_STATUS_Types idata last_state;
 
-static u16 idata s_cut[4];          /* 状态内确认计数，防止临界点抖动。 */
+static u16 idata s_cut[2];          /* 状态内确认计数，防止临界点抖动。 */
 
-static u16 idata s_cccv_curr_limit_ma;        /* CCCV 实际限流电流，单位 mA。 */
-static u8  idata s_cccv_derate_cnt;           /* CCCV 降流间隔计数。 */
-static u8  idata s_remove_cnt;                /* 拔电池确认计数。 */
+static u16 idata s_cccv_curr_limit_ma;         /* CCCV 实际限流电流，单位 mA。 */
+static u8  idata s_remove_cnt;                 /* 拔电池确认计数。 */
 static u16 idata s_no_current_cnt;             /* 充电中有压无流异常确认计数。 */
 static u16 idata s_vout_probe_period_10ms;    /* 满电/异常时分压检测间隔计数。 */
 static u8  idata s_vout_probe_on_10ms;        /* 满电/异常时分压检测开窗计数。 */
-static bit s_full_recharge;                  /* 满电回充复检阶段保持满电显示。 */
-static bit s_aging_lock;                     /* 老化模式锁存，断电后退出。 */
+static bit s_full_recharge;                   /* 满电回充复检阶段保持满电显示。 */
+static bit s_aging_lock;                      /* 老化模式锁存，断电后退出。 */
 u16 idata s_dummy_load_10ms;                   /* DUMMY_LOAD hold counter, unit 10ms. */
 
 u16 idata cccv_timeout_min;
@@ -565,8 +564,6 @@ void usr_ch_func(void)
                 last_state = ch_state;
                 s_cut[0] = 0;
                 s_cut[1] = 0;
-                s_cut[2] = 0;
-                s_cut[3] = 0;
                 s_remove_cnt = 0U;
                 s_no_current_cnt = 0U;
                 s_vout_probe_period_10ms = 100U;  /* 满电/异常进入后尽快打开一次分压检测 */
@@ -582,8 +579,7 @@ void usr_ch_func(void)
 
                 if(ch_state == CH_CCCV)
                 {
-                    s_cccv_curr_limit_ma = 0U;
-                    s_cccv_derate_cnt = 0U;
+                    s_cccv_curr_limit_ma = target_current_ma;
                 }
             }
 
@@ -948,14 +944,14 @@ void usr_ch_func(void)
                 }
                 else if((val.vout >= target_voltage_mv) && (val.curr <= iGED))
                 {
-                    if(++s_cut[2] >= 100U)       /* 1秒确认满电 */
+                    if(++s_cut[1] >= 100U)       /* 1秒确认满电 */
                     {
                         ch_set_state(CH_FULL, "转满电");
                     }
                 }
                 else
                 {
-                    s_cut[2] = 0;
+                    s_cut[1] = 0;
                 }
                 break;
 

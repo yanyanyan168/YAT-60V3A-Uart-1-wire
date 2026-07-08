@@ -64,11 +64,11 @@ typedef struct
 {
     u16 vout;              /* 电池电压，单位 mV */
     u16 curr;              /* 充电电流，单位 mA */
-    s32 i_ntc;             /* NTC 温度，沿用 54.6V NTC 表返回单位 */
+    s16 i_ntc;             /* NTC 温度，0.1C单位 */
 } VAL_Type;
 
-extern xdata ADC_Type adc;
-extern xdata VAL_Type val;
+extern idata ADC_Type adc;
+extern idata VAL_Type val;
 
 void adc_init(void);
 #define ADC_Init()                        adc_init()

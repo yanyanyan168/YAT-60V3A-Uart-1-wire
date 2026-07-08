@@ -10,8 +10,8 @@
 #include "timer.h"
 #include "ntc.h"
 
-xdata ADC_Type adc;
-xdata VAL_Type val;
+idata ADC_Type adc;
+idata VAL_Type val;
 
 void adc_init(void)
 {
@@ -54,7 +54,7 @@ u16 Get_ADC_Channel(ADC_Channel channel)
     min_raw = 0x0FFFU;
     ADC_CHS0 = channel;
 
-    for(i = 0U; i < ADC_SAMPLE_CNT; i++)
+    for(i = 0U; i < 10; i++)
     {
         ADC_CFG0 |= ADC_CHAN0_TRG(0x1);
         while((ADC_STA & ADC_CHAN0_DONE(0x1)) == 0U)
@@ -77,7 +77,7 @@ u16 Get_ADC_Channel(ADC_Channel channel)
 
     sum -= max_raw;
     sum -= min_raw;
-    return (u16)(sum / (ADC_SAMPLE_CNT - ADC_DROP_CNT));
+    return (u16)(sum>>3);
 }
 
 

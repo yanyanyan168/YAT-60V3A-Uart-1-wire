@@ -76,13 +76,6 @@ static void fifo_ctrl_reset(fifo_t *fifo)
      * cnt：当前 FIFO 中有效数据字节数。
      */
     fifo->cnt = 0U;
-
-    /*
-     * overflow：溢出标志。
-     * 0：未发生溢出
-     * 1：曾经发生过 FIFO 满后继续写入
-     */
-    fifo->overflow = 0U;
 }
 
 
@@ -138,11 +131,6 @@ void ch_fifo_push(u8 dat)
      */
     if(s_ch_fifo.cnt >= DEBUG_FIFO_SIZE)
     {
-        /*
-         * 记录发生过溢出。
-         */
-        s_ch_fifo.overflow = 1U;
-
         /*
          * 读指针前移，相当于丢弃最旧的一个字节。
          */
@@ -228,20 +216,6 @@ u8 ch_fifo_pop(void)
 }
 
 
-/**
-  * @brief  查询 DEBUG FIFO 是否发生过溢出。
-  * @param  无
-  * @retval 0：未溢出
-  *         1：发生过溢出
-  *
-  * 说明：
-  * overflow 标志在 fifo_ctrl_reset() 或 ch_fifo_clear() 中清零。
-  */
-bit ch_fifo_overflow(void)
-{
-    return (bit)s_ch_fifo.overflow;
-}
-
 
 /**
   * @brief  清空 COM FIFO。
@@ -277,11 +251,6 @@ void com_fifo_push(u8 dat)
      */
     if(s_com_fifo.cnt >= COM_FIFO_SIZE)
     {
-        /*
-         * 记录发生过溢出。
-         */
-        s_com_fifo.overflow = 1U;
-
         /*
          * 丢弃最旧的数据：
          * 读指针前移一格。
@@ -366,17 +335,3 @@ u8 com_fifo_pop(void)
     return dat;
 }
 
-
-/**
-  * @brief  查询 COM FIFO 是否发生过溢出。
-  * @param  无
-  * @retval 0：未溢出
-  *         1：发生过溢出
-  *
-  * 说明：
-  * overflow 标志在 fifo_ctrl_reset() 或 com_fifo_clear() 中清零。
-  */
-bit com_fifo_overflow(void)
-{
-    return (bit)s_com_fifo.overflow;
-}
